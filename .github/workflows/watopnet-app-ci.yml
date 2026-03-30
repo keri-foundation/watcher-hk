@@ -1,0 +1,99 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+
+
+name: GitHub Actions for Watopnet
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-15, ubuntu-latest ]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Set up Python 3.12.6
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12.6
+
+      - name: Install libsodium (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install libsodium
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix libsodium)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+
+      - name: Check disk space before install
+        run: df -h
+
+      - name: Install dependencies
+        env:
+          HKSVC_PULL_TOKEN: ${{ secrets.HKSVC_PULL_TOKEN }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir flake8 pytest coverage
+          if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
+
+      - name: Check disk space after install
+        if: always()
+        run: df -h
+      - name: Lint changes
+        run: |
+          # stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          flake8 . --count --exit-zero --ignore=E7,F841,E301,E302,E303 --max-complexity=10 --max-line-length=127 --statistics
+      - name: Run core KERI tests
+        run: |
+          pytest tests/watopnet --ignore test/scripts
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup SSH Key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Set up Python 3.12.6
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12.6
+
+      - name: Check disk space before install
+        run: df -h
+
+      - name: Install dependencies
+        env:
+          HKSVC_PULL_TOKEN: ${{ secrets.HKSVC_PULL_TOKEN }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir pytest pytest-cov
+          if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
+
+      - name: Check disk space after install
+        if: always()
+        run: df -h
+      - name: Run core KERI tests
+        run: |
+          pytest tests/watopnet --cov=./ --cov-report=xml
+      - name: Upload
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

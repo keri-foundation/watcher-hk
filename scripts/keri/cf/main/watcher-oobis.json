@@ -1,0 +1,28 @@
+{
+  "dt": "2022-01-20T12:57:59.823350+00:00",
+  "iurls": [
+    "http://65.21.253.212:5623/oobi?name=EU-FI-HTZ-01-POOL-1",
+    "http://8.210.213.186:5623/oobi?name=AS-CN-ALI-01-POOL-1",
+    "http://51.79.54.121:5623/oobi?name=NA-CA-OVH-01-POOL-1",
+    "http://102.37.159.99:5623/oobi?name=AF-ZA-AZR-01-POOL-1",
+    "http://54.233.109.129:5623/oobi?name=SA-BR-AWS-01-POOL-1",
+    "http://5.161.69.25:5623/oobi?name=NA-US-HTZ-01-POOL-2",
+    "http://51.161.130.60:5623/oobi?name=OC-AU-OVH-01-POOL-2",
+    "http://20.78.61.227:5623/oobi?name=AS-JP-AZR-01-POOL-2",
+    "http://13.244.119.106:5623/oobi?name=AF-ZA-AWS-01-POOL-2",
+    "http://8.208.27.153:5623/oobi?name=EU-UK-ALI-01-POOL-2",
+    "http://witness1.main.provenant.net:5631/oobi?name-Provenant-Witness-1",
+    "http://witness2.main.provenant.net:5631/oobi?name-Provenant-Witness-2",
+    "http://witness3.main.provenant.net:5631/oobi?name-Provenant-Witness-3",
+    "http://witness4.main.provenant.net:5631/oobi?name-Provenant-Witness-4",
+    "http://witness5.main.provenant.net:5631/oobi?name-Provenant-Witness-5",
+    "https://weboftrust.github.io/.well-known/keri/oobi/EDP1vHcw_wc4M__Fj53-cJaBnZZASd-aMTaSyWEQ-PC2?name=GLEIF%20RoOT",
+    "https://weboftrust.github.io/.well-known/keri/oobi/EINmHd5g7iV-UldkkkKyBIH052bIyxZNBn9pq-zNrYoS?name=GLEIF%20External",
+    "https://weboftrust.github.io/.well-known/keri/oobi/EFcrtYzHx11TElxDmEDx355zm7nJhbmdcIluw7UMbUIL?name=GLEIF%20Internal",
+    "http://witness1.main.provenant.net:5631/oobi/EK2r6EnDXre2pecTBO8s99j4OtNaaDIhVyr7uGugDhpm/witness?name=Provenant%20LE",
+    "http://witness1.main.provenant.net:5631/oobi/ED88Jn6CnWpNbSYz6vp9DOSpJH2_Di5MSwWTf1l34JJm/witness?name=Provenant%20QVI",
+    "http://witness1.main.provenant.net:5631/oobi/EOShPW3uhzumJGka7YXbWoTDdKhFOrKlHTaUREKhKYNE/witness?name=Randy%20Warshaw",
+    "http://witness1.main.provenant.net:5631/oobi/EAJ-w4YYueXlmAykFcQTtJGjoJ1ngIprzTkiBw8C4rkH/witness?name=RootsID",
+    "http://witness1.main.provenant.net:5631/oobi/EPmX8LcHyBCoFZhvrGsnlZcL6m3wad5x97XsEefxDVHl/witness?name=Lance%20Byrd"
+  ]
+}

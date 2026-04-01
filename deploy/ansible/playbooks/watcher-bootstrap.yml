@@ -1,0 +1,8 @@
+---
+- name: Bootstrap host-first watcher pilot
+  hosts: watcher_hosts
+  become: true
+  gather_facts: true
+
+  roles:
+    - watcher_host

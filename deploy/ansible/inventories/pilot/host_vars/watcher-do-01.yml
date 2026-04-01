@@ -1,0 +1,22 @@
+ansible_user: >-
+  {{
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_USER', default='') | trim
+  }}
+ansible_host: >-
+  {{
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_HOST', default='') | trim | regex_replace('^.*@', '')
+  }}
+ansible_become_method: su
+ansible_become_user: root
+ansible_become_password: >-
+  {{
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_BECOME_PASSWORD', default='') | trim
+  }}
+
+watcher_name: watcher-do-01
+watcher_base: watcher-do-01
+watcher_host: 0.0.0.0
+watcher_http_port: 7632
+watcher_boot_host: 127.0.0.1
+watcher_boot_port: 7631
+watcher_advertised_host: "{{ ansible_host }}"

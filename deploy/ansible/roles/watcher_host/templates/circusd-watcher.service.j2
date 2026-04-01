@@ -1,0 +1,31 @@
+[Unit]
+Description=KERI watcher Circus process manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ watcher_service_user }}
+Group={{ watcher_service_group }}
+UMask=0027
+WorkingDirectory={{ watcher_repo_home }}
+RuntimeDirectory=watopnet-circus
+RuntimeDirectoryMode=0750
+ExecStart={{ watcher_circusd_bin }} {{ watcher_circus_config_path }}
+ExecReload={{ watcher_circusctl_bin }} --endpoint {{ watcher_circus_endpoint }} reload
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths={{ watcher_config_root }} {{ watcher_keri_data_dir }} {{ watcher_runtime_dir }} {{ watcher_log_dir }}
+
+[Install]
+WantedBy=multi-user.target

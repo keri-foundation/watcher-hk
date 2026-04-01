@@ -1,16 +1,16 @@
 ansible_user: >-
   {{
-    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_USER', default='') | trim
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_USER', default=undef()) | trim
   }}
 ansible_host: >-
   {{
-    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_HOST', default='') | trim | regex_replace('^.*@', '')
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_HOST', default=undef()) | trim | regex_replace('^.*@', '')
   }}
 ansible_become_method: su
 ansible_become_user: root
 ansible_become_password: >-
   {{
-    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_BECOME_PASSWORD', default='') | trim
+    lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_BECOME_PASSWORD', default=undef()) | trim
   }}
 
 watcher_name: watcher-do-01

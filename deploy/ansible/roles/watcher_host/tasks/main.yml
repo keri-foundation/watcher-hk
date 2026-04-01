@@ -36,6 +36,14 @@
     mode: preserve
   loop: "{{ watcher_local_project_files }}"
 
+- name: Ensure watcher repo tree ownership is consistent
+  ansible.builtin.file:
+    path: "{{ watcher_repo_home }}"
+    state: directory
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    recurse: true
+
 - name: Ensure watcher wrapper directory exists
   ansible.builtin.file:
     path: "{{ watcher_repo_home }}/ops"
@@ -45,6 +53,7 @@
     mode: "0755"
 
 - name: Create watcher virtualenv
+  become: false
   ansible.builtin.command:
     argv:
       - "{{ watcher_python_bootstrap_bin }}"
@@ -56,6 +65,7 @@
   when: not ansible_check_mode
 
 - name: Bootstrap pip inside the watcher virtualenv
+  become: false
   ansible.builtin.command:
     argv:
       - "{{ watcher_python_bin }}"
@@ -67,6 +77,7 @@
   when: not ansible_check_mode
 
 - name: Install Python packages required for Circus
+  become: false
   ansible.builtin.pip:
     name: "{{ watcher_python_packages }}"
     executable: "{{ watcher_pip_executable }}"
@@ -75,6 +86,7 @@
     - watcher_python_packages | length > 0
 
 - name: Install editable local watcher package
+  become: false
   ansible.builtin.pip:
     name: "{{ watcher_repo_home }}"
     editable: true
@@ -119,10 +131,13 @@
     - Reload systemd
     - Restart watcher service
 
+- name: Flush watcher service handlers before enable/start
+  ansible.builtin.meta: flush_handlers
+  when: not ansible_check_mode
+
 - name: Enable and start watcher service
   ansible.builtin.systemd_service:
     name: "{{ watcher_systemd_service_name }}"
-    daemon_reload: true
     enabled: true
     state: started
   when: not ansible_check_mode

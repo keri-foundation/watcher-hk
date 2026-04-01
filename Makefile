@@ -9,6 +9,11 @@ ANSIBLE_ADHOC := ansible -i $(ANSIBLE_INVENTORY)
 ONEPASSWORD_SSH_AUTH_SOCK ?= $(HOME)/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock
 WATCHER_HOST ?= watcher-do-01
 WATCHER_LOG_LINES ?= 40
+WATCHER_SYSTEMD_SERVICE ?= circusd-watcher
+WATCHER_CIRCUSCTL_BIN ?= /opt/watcher-hk/.venv/bin/circusctl
+WATCHER_CIRCUS_ENDPOINT ?= ipc:///var/run/watopnet-circus/ctrl.sock
+WATCHER_STDOUT_LOG ?= /var/log/watopnet/watcher/stdout.log
+WATCHER_STDERR_LOG ?= /var/log/watopnet/watcher/stderr.log
 
 .DEFAULT_GOAL := help
 
@@ -61,9 +66,9 @@ watcher-all: ## Run preflight, ping, apply, and verify in one auth batch
 .PHONY: watcher-status
 watcher-status: ## Show systemd and Circus watcher status for the watcher host
 	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$(ONEPASSWORD_SSH_AUTH_SOCK)" "$(ANSIBLE_WRAPPER)" \
-		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''systemctl status circusd-watcher --no-pager --lines=20; printf "\\n=== circusctl ===\\n"; /opt/watcher-hk/.venv/bin/circusctl --endpoint ipc:///var/run/watopnet-circus/ctrl.sock status'\'''
+		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''systemctl status $(WATCHER_SYSTEMD_SERVICE) --no-pager --lines=20; printf "\\n=== circusctl ===\\n"; $(WATCHER_CIRCUSCTL_BIN) --endpoint $(WATCHER_CIRCUS_ENDPOINT) status'\'''
 
 .PHONY: watcher-logs
 watcher-logs: ## Tail watcher stdout and stderr logs from the host
 	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$(ONEPASSWORD_SSH_AUTH_SOCK)" "$(ANSIBLE_WRAPPER)" \
-		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''printf "=== stdout ===\\n"; tail -n $(WATCHER_LOG_LINES) /var/log/watopnet/watcher/stdout.log; printf "\\n=== stderr ===\\n"; tail -n $(WATCHER_LOG_LINES) /var/log/watopnet/watcher/stderr.log'\'''
+		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''printf "=== stdout ===\\n"; tail -n $(WATCHER_LOG_LINES) $(WATCHER_STDOUT_LOG); printf "\\n=== stderr ===\\n"; tail -n $(WATCHER_LOG_LINES) $(WATCHER_STDERR_LOG)'\'''

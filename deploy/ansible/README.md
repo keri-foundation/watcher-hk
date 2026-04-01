@@ -18,6 +18,11 @@ Ansible owns the machine state: packages, users, directories, Python venv,
 a synced local checkout of `watcher-hk`, rendered configs, and the systemd unit.
 Circus owns the process lifecycle after the host is prepared.
 
+This operator-surface slice assumes the role and scaffolding slices are also
+present. If you are reading this branch or PR in isolation, files such as
+`ansible.cfg`, `op.env.example`, `with-op-ssh-agent.sh`, and the
+`inventories/` and `roles/` trees arrive in the companion deployment PRs.
+
 ## Prerequisites
 
 - Ansible 2.14+ on the operator workstation

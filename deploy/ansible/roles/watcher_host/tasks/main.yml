@@ -1,0 +1,128 @@
+---
+- name: Install host packages
+  ansible.builtin.package:
+    name: "{{ watcher_system_packages }}"
+    state: present
+  when: watcher_system_packages | length > 0
+
+- name: Ensure watcher group exists
+  ansible.builtin.group:
+    name: "{{ watcher_service_group }}"
+    system: true
+
+- name: Ensure watcher user exists
+  ansible.builtin.user:
+    name: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    system: true
+    shell: "{{ watcher_service_shell }}"
+    create_home: false
+
+- name: Ensure watcher directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop: "{{ watcher_directories }}"
+
+- name: Copy local watcher project files to the host
+  ansible.builtin.copy:
+    src: "{{ watcher_local_repo_src }}/{{ item.src }}"
+    dest: "{{ watcher_repo_home }}/{{ item.dest }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: preserve
+  loop: "{{ watcher_local_project_files }}"
+
+- name: Ensure watcher wrapper directory exists
+  ansible.builtin.file:
+    path: "{{ watcher_repo_home }}/ops"
+    state: directory
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0755"
+
+- name: Create watcher virtualenv
+  ansible.builtin.command:
+    argv:
+      - "{{ watcher_python_bootstrap_bin }}"
+      - -m
+      - venv
+      - "{{ watcher_venv_path }}"
+  args:
+    creates: "{{ watcher_venv_path }}/bin/python"
+  when: not ansible_check_mode
+
+- name: Bootstrap pip inside the watcher virtualenv
+  ansible.builtin.command:
+    argv:
+      - "{{ watcher_python_bin }}"
+      - -m
+      - ensurepip
+      - --upgrade
+  args:
+    creates: "{{ watcher_venv_path }}/bin/pip"
+  when: not ansible_check_mode
+
+- name: Install Python packages required for Circus
+  ansible.builtin.pip:
+    name: "{{ watcher_python_packages }}"
+    executable: "{{ watcher_pip_executable }}"
+  when:
+    - not ansible_check_mode
+    - watcher_python_packages | length > 0
+
+- name: Install editable local watcher package
+  ansible.builtin.pip:
+    name: "{{ watcher_repo_home }}"
+    editable: true
+    executable: "{{ watcher_pip_executable }}"
+  when: not ansible_check_mode
+
+- name: Render watopnet app config
+  ansible.builtin.template:
+    src: watopnet.json.j2
+    dest: "{{ watcher_app_config_path }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0640"
+  notify: Restart watcher service
+
+- name: Render run-watopnet wrapper
+  ansible.builtin.template:
+    src: run-watopnet.sh.j2
+    dest: "{{ watcher_wrapper_path }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0755"
+  notify: Restart watcher service
+
+- name: Render Circus config
+  ansible.builtin.template:
+    src: circus-watcher.ini.j2
+    dest: "{{ watcher_circus_config_path }}"
+    owner: root
+    group: "{{ watcher_service_group }}"
+    mode: "0640"
+  notify: Restart watcher service
+
+- name: Render systemd unit
+  ansible.builtin.template:
+    src: circusd-watcher.service.j2
+    dest: "{{ watcher_service_unit_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart watcher service
+
+- name: Enable and start watcher service
+  ansible.builtin.systemd_service:
+    name: "{{ watcher_systemd_service_name }}"
+    daemon_reload: true
+    enabled: true
+    state: started
+  when: not ansible_check_mode

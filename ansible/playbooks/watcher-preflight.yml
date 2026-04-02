@@ -1,0 +1,61 @@
+---
+- name: Preflight host-first watcher pilot
+  hosts: watcher_hosts
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Assert pilot inventory resolves a host address
+      ansible.builtin.assert:
+        that:
+          - ansible_host is defined
+          - ansible_host | string | length > 0
+        fail_msg: Resolve ansible_host from 1Password before running the pilot
+
+    - name: Assert pilot inventory uses the non-root keri login
+      ansible.builtin.assert:
+        that:
+          - ansible_user is defined
+          - ansible_user == 'keri'
+        fail_msg: The pilot must use the keri user instead of root
+
+    - name: Assert controller env resolves watcher user from op run
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_USER', default='') | string | length > 0
+        fail_msg: Resolve WATCHER_ANSIBLE_USER through op run before running the pilot
+
+    - name: Assert controller env resolves watcher host from op run
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', 'WATCHER_ANSIBLE_HOST', default='') | string | length > 0
+        fail_msg: Resolve WATCHER_ANSIBLE_HOST through op run before running the pilot
+
+    - name: Assert become password resolves from op run
+      ansible.builtin.assert:
+        that:
+          - ansible_become_password is defined
+          - ansible_become_password | string | length > 0
+        fail_msg: Resolve WATCHER_ANSIBLE_BECOME_PASSWORD through op run before running the pilot
+
+    - name: Assert become method stays on the validated host path
+      ansible.builtin.assert:
+        that:
+          - ansible_become_method is defined
+          - ansible_become_user is defined
+          - ansible_become_method == 'su'
+          - ansible_become_user == 'root'
+        fail_msg: The current validated host escalation path is keri SSH plus su to root
+
+    - name: Assert required watcher variables are present
+      ansible.builtin.assert:
+        that:
+          - lookup('vars', item, default='') | string | length > 0
+        fail_msg: "Required pilot variable is missing: {{ item }}"
+      loop: "{{ watcher_required_host_vars }}"
+
+    - name: Assert watcher ports are distinct
+      ansible.builtin.assert:
+        that:
+          - watcher_http_port | int != watcher_boot_port | int
+        fail_msg: watcher_http_port and watcher_boot_port must be different

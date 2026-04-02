@@ -1,0 +1,31 @@
+[circus]
+endpoint = {{ watcher_circus_endpoint }}
+pubsub_endpoint = {{ watcher_circus_pubsub_endpoint }}
+stats_endpoint = {{ watcher_circus_stats_endpoint }}
+statsd = {{ watcher_circus_statsd }}
+httpd = false
+
+[watcher:watopnet-watcher]
+cmd = {{ watcher_wrapper_path }}
+working_dir = {{ watcher_repo_home }}
+shell = false
+uid = {{ watcher_service_user }}
+gid = {{ watcher_service_group }}
+numprocesses = 1
+autostart = true
+autorestart = true
+stdout_stream.class = FileStream
+stdout_stream.filename = {{ watcher_stdout_log_path }}
+stderr_stream.class = FileStream
+stderr_stream.filename = {{ watcher_stderr_log_path }}
+stop_signal = {{ watcher_stop_signal }}
+graceful_timeout = {{ watcher_graceful_timeout }}
+
+[env:watopnet-watcher]
+WATCHER_HOME = {{ watcher_repo_home }}
+WATOPNET_CONFIG_DIR = {{ watcher_config_root }}
+WATOPNET_BASE = {{ watcher_base }}
+WATOPNET_HOST = {{ watcher_host }}
+WATOPNET_HTTP_PORT = {{ watcher_http_port }}
+WATOPNET_BOOT_HOST = {{ watcher_boot_host }}
+WATOPNET_BOOT_PORT = {{ watcher_boot_port }}

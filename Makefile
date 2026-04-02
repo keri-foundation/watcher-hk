@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 ROOT_DIR := $(CURDIR)
-ANSIBLE_DIR := $(ROOT_DIR)/deploy/ansible
+ANSIBLE_DIR := $(ROOT_DIR)/ansible
 ANSIBLE_WRAPPER := $(ANSIBLE_DIR)/with-op-ssh-agent.sh
 ANSIBLE_INVENTORY := inventories/pilot/hosts.yml
 ANSIBLE_PLAYBOOK := ansible-playbook -i $(ANSIBLE_INVENTORY)

@@ -72,7 +72,7 @@ make watcher-logs
 
 ### Direct playbook invocation
 
-Run from `deploy/ansible/`:
+Run from `ansible/`:
 
 ```bash
 ./with-op-ssh-agent.sh --no-ssh-agent \
@@ -116,7 +116,7 @@ ansible-lint playbooks/watcher-bootstrap.yml \
 ## Directory Layout
 
 ```
-deploy/ansible/
+ansible/
 ├── .ansible-lint.yml
 ├── ansible.cfg
 ├── op.env.example

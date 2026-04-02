@@ -208,5 +208,3 @@ __marimo__/
 
 # Ansible operator secrets (never commit)
 ansible/op.env
-# Local README duplicate (tracked on scaffolding branch)
-ansible/README.md

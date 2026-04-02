@@ -41,6 +41,8 @@
     - name: Assert become method stays on the validated host path
       ansible.builtin.assert:
         that:
+          - ansible_become_method is defined
+          - ansible_become_user is defined
           - ansible_become_method == 'su'
           - ansible_become_user == 'root'
         fail_msg: The current validated host escalation path is keri SSH plus su to root

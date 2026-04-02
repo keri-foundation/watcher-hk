@@ -37,11 +37,6 @@ if ! command -v op >/dev/null 2>&1; then
     exit 1
 fi
 
-if ! command -v ssh-add >/dev/null 2>&1; then
-    echo "ssh-add is required" >&2
-    exit 1
-fi
-
 if [[ ! -f "$OP_RUN_ENV_FILE" ]]; then
     echo "op run env file is required: $OP_RUN_ENV_FILE" >&2
     echo "Copy op.env.example to op.env and fill in your 1Password secret references." >&2
@@ -49,6 +44,11 @@ if [[ ! -f "$OP_RUN_ENV_FILE" ]]; then
 fi
 
 configure_1password_ssh_agent() {
+    if ! command -v ssh-add >/dev/null 2>&1; then
+        echo "ssh-add is required when SSH agent support is enabled" >&2
+        exit 1
+    fi
+
     if [[ -n ${SSH_AUTH_SOCK:-} ]] && ssh-add -l >/dev/null 2>&1; then
         return 0
     fi

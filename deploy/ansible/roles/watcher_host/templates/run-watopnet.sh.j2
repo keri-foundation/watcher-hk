@@ -12,13 +12,12 @@ WATOPNET_HTTP_PORT="${WATOPNET_HTTP_PORT:-{{ watcher_http_port }}}"
 WATOPNET_BOOT_HOST="${WATOPNET_BOOT_HOST:-{{ watcher_boot_host }}}"
 WATOPNET_BOOT_PORT="${WATOPNET_BOOT_PORT:-{{ watcher_boot_port }}}"
 
-if [[ "${WATOPNET_BASE}" = /* ]]; then
-    echo "WATOPNET_BASE must remain a relative path: ${WATOPNET_BASE}" >&2
-    exit 1
-fi
-
 export KERI_BASER_MAP_SIZE=1099511627776
+{% if watcher_debug | default(false) %}
 export DEBUG_WATCHER=1
+{% else %}
+unset DEBUG_WATCHER || true
+{% endif %}
 ulimit -S -n 65536
 
 cd "${WATCHER_HOME}"

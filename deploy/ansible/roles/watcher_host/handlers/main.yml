@@ -2,6 +2,7 @@
 - name: Reload systemd
   ansible.builtin.systemd_service:
     daemon_reload: true
+  when: not ansible_check_mode
 
 - name: Restart watcher service
   ansible.builtin.systemd_service:

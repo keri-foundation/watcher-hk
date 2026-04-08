@@ -52,46 +52,46 @@
     group: "{{ watcher_service_group }}"
     mode: "0755"
 
-- name: Create watcher virtualenv
-  become: false
-  ansible.builtin.command:
-    argv:
-      - "{{ watcher_python_bootstrap_bin }}"
-      - -m
-      - venv
-      - "{{ watcher_venv_path }}"
-  args:
-    creates: "{{ watcher_venv_path }}/bin/python"
-  when: not ansible_check_mode
+- name: Install watcher Python runtime as service user
+  become: true
+  become_user: "{{ watcher_service_user }}"
+  block:
+    - name: Create watcher virtualenv
+      ansible.builtin.command:
+        argv:
+          - "{{ watcher_python_bootstrap_bin }}"
+          - -m
+          - venv
+          - "{{ watcher_venv_path }}"
+      args:
+        creates: "{{ watcher_venv_path }}/bin/python"
+      when: not ansible_check_mode
 
-- name: Bootstrap pip inside the watcher virtualenv
-  become: false
-  ansible.builtin.command:
-    argv:
-      - "{{ watcher_python_bin }}"
-      - -m
-      - ensurepip
-      - --upgrade
-  args:
-    creates: "{{ watcher_venv_path }}/bin/pip"
-  when: not ansible_check_mode
+    - name: Bootstrap pip inside the watcher virtualenv
+      ansible.builtin.command:
+        argv:
+          - "{{ watcher_python_bin }}"
+          - -m
+          - ensurepip
+          - --upgrade
+      args:
+        creates: "{{ watcher_venv_path }}/bin/pip"
+      when: not ansible_check_mode
 
-- name: Install Python packages required for Circus
-  become: false
-  ansible.builtin.pip:
-    name: "{{ watcher_python_packages }}"
-    executable: "{{ watcher_pip_executable }}"
-  when:
-    - not ansible_check_mode
-    - watcher_python_packages | length > 0
+    - name: Install Python packages required for Circus
+      ansible.builtin.pip:
+        name: "{{ watcher_python_packages }}"
+        executable: "{{ watcher_pip_executable }}"
+      when:
+        - not ansible_check_mode
+        - watcher_python_packages | length > 0
 
-- name: Install editable local watcher package
-  become: false
-  ansible.builtin.pip:
-    name: "{{ watcher_repo_home }}"
-    editable: true
-    executable: "{{ watcher_pip_executable }}"
-  when: not ansible_check_mode
+    - name: Install editable local watcher package
+      ansible.builtin.pip:
+        name: "{{ watcher_repo_home }}"
+        editable: true
+        executable: "{{ watcher_pip_executable }}"
+      when: not ansible_check_mode
 
 - name: Render watopnet app config
   ansible.builtin.template:

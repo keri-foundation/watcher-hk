@@ -9,6 +9,7 @@ ANSIBLE_ADHOC := ansible -i $(ANSIBLE_INVENTORY)
 ONEPASSWORD_SSH_AUTH_SOCK ?= $(HOME)/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock
 WATCHER_HOST ?= watcher-do-01
 WATCHER_LOG_LINES ?= 40
+WATCHER_RECENT_WINDOW ?= 15 minutes ago
 WATCHER_SYSTEMD_SERVICE := circusd-watcher
 WATCHER_SYSTEMD_UNIT := /etc/systemd/system/circusd-watcher.service
 WATCHER_CIRCUSCTL_BIN := /opt/watcher-hk/.venv/bin/circusctl
@@ -101,3 +102,16 @@ watcher-logs: ## Tail watcher stdout and stderr logs from the host
 	@$(require_watcher_log_lines)
 	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$${SSH_AUTH_SOCK:-$(ONEPASSWORD_SSH_AUTH_SOCK)}" "$(ANSIBLE_WRAPPER)" \
 		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''printf "=== stdout ===\\n"; tail -n $(WATCHER_LOG_LINES) $(WATCHER_STDOUT_LOG); printf "\\n=== stderr ===\\n"; tail -n $(WATCHER_LOG_LINES) $(WATCHER_STDERR_LOG)'\'''
+
+.PHONY: watcher-current-stderr
+watcher-current-stderr: ## Show only watcher stderr lines from the current service run window
+	@$(require_watcher_host)
+	@$(require_watcher_log_lines)
+	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$${SSH_AUTH_SOCK:-$(ONEPASSWORD_SSH_AUTH_SOCK)}" "$(ANSIBLE_WRAPPER)" \
+		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''start=$$(date -u -d "$$(systemctl show -p ActiveEnterTimestamp --value $(WATCHER_SYSTEMD_SERVICE))" "+%Y-%m-%d %H:%M:%S"); printf "=== current-run stderr (from %s) ===\\n" "$$start"; awk -v start="$$start" "BEGIN {capture=0} {if (length(\$$0) >= 19 && substr(\$$0,5,1) == \"-\" && substr(\$$0,8,1) == \"-\" && substr(\$$0,11,1) == \" \") {capture = (substr(\$$0,1,19) >= start)} if (capture) print}" $(WATCHER_STDERR_LOG) | tail -n $(WATCHER_LOG_LINES)'\'''
+
+.PHONY: watcher-recent
+watcher-recent: ## Show a bounded recent watcher evidence snapshot: Circus state, ports, and recent journal
+	@$(require_watcher_host)
+	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$${SSH_AUTH_SOCK:-$(ONEPASSWORD_SSH_AUTH_SOCK)}" "$(ANSIBLE_WRAPPER)" \
+		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''printf "=== circusctl ===\\n"; $(WATCHER_CIRCUSCTL_BIN) --endpoint $(WATCHER_CIRCUS_ENDPOINT) status; printf "\\n=== ports ===\\n"; ss -ltnp | grep -E "7631|7632" || true; printf "\\n=== journal (since $(WATCHER_RECENT_WINDOW)) ===\\n"; journalctl -u $(WATCHER_SYSTEMD_SERVICE) -b 0 --since "$(WATCHER_RECENT_WINDOW)" --no-pager'\'''

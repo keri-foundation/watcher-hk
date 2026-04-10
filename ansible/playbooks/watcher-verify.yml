@@ -1,0 +1,167 @@
+---
+- name: Verify host-first watcher pilot
+  hosts: watcher_hosts
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert watcher service is running and enabled
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services[watcher_systemd_service_name + '.service'] is defined
+          - ansible_facts.services[watcher_systemd_service_name + '.service'].state == 'running'
+          - ansible_facts.services[watcher_systemd_service_name + '.service'].status == 'enabled'
+        fail_msg: "{{ watcher_systemd_service_name }} is not enabled and running"
+
+    - name: Check IPC control socket
+      ansible.builtin.stat:
+        path: "{{ watcher_runtime_dir }}/ctrl.sock"
+      register: watcher_ctrl_socket
+
+    - name: Check watcher stdout log
+      ansible.builtin.stat:
+        path: "{{ watcher_stdout_log_path }}"
+      register: watcher_stdout_log
+
+    - name: Check watcher stderr log
+      ansible.builtin.stat:
+        path: "{{ watcher_stderr_log_path }}"
+      register: watcher_stderr_log
+
+    - name: Assert sockets and log files exist
+      ansible.builtin.assert:
+        that:
+          - watcher_ctrl_socket.stat.exists
+          - watcher_ctrl_socket.stat.issock | default(false)
+          - watcher_stdout_log.stat.exists
+          - watcher_stderr_log.stat.exists
+        fail_msg: Watcher IPC socket or log files are missing
+
+    - name: Query Circus watcher status
+      ansible.builtin.command:
+        argv:
+          - "{{ watcher_circusctl_bin }}"
+          - --endpoint
+          - "{{ watcher_circus_endpoint }}"
+          - status
+      register: watcher_circus_status
+      changed_when: false
+
+    - name: Assert watcher is present in Circus status output
+      ansible.builtin.assert:
+        that:
+          - "'watopnet-watcher' in watcher_circus_status.stdout"
+        fail_msg: Circus status did not report the watopnet-watcher watcher
+
+    - name: Read systemd main PID for Circus
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - show
+          - -p
+          - MainPID
+          - --value
+          - "{{ watcher_systemd_service_name }}"
+      register: watcher_systemd_main_pid
+      changed_when: false
+
+    - name: Assert Circus main PID exists
+      ansible.builtin.assert:
+        that:
+          - (watcher_systemd_main_pid.stdout | trim | int) > 0
+        fail_msg: systemd did not report a valid MainPID for {{ watcher_systemd_service_name }}
+
+    - name: Sample non-stats watcher child process
+      ansible.builtin.command:
+        argv:
+          - ps
+          - -ww
+          - --ppid
+          - "{{ watcher_systemd_main_pid.stdout | trim }}"
+          - -o
+          - pid=,stat=,args=
+      register: watcher_child_sample_1
+      changed_when: false
+
+    - name: Filter first watcher child sample
+      ansible.builtin.set_fact:
+        watcher_child_sample_1_lines: >-
+          {{
+            watcher_child_sample_1.stdout_lines
+            | reject('search', 'circus import stats')
+            | list
+          }}
+
+    - name: Assert first watcher child sample is present
+      ansible.builtin.assert:
+        that:
+          - watcher_child_sample_1_lines | length == 1
+        fail_msg: Expected exactly one non-stats watcher child under Circus
+
+    - name: Pause before second watcher child sample
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Sample non-stats watcher child process again
+      ansible.builtin.command:
+        argv:
+          - ps
+          - -ww
+          - --ppid
+          - "{{ watcher_systemd_main_pid.stdout | trim }}"
+          - -o
+          - pid=,stat=,args=
+      register: watcher_child_sample_2
+      changed_when: false
+
+    - name: Filter second watcher child sample
+      ansible.builtin.set_fact:
+        watcher_child_sample_2_lines: >-
+          {{
+            watcher_child_sample_2.stdout_lines
+            | reject('search', 'circus import stats')
+            | list
+          }}
+
+    - name: Assert second watcher child sample is present
+      ansible.builtin.assert:
+        that:
+          - watcher_child_sample_2_lines | length == 1
+        fail_msg: Expected exactly one non-stats watcher child under Circus on second sample
+
+    - name: Parse watcher child samples
+      ansible.builtin.set_fact:
+        watcher_child_parts_1: "{{ (watcher_child_sample_1_lines | first).split() }}"
+        watcher_child_parts_2: "{{ (watcher_child_sample_2_lines | first).split() }}"
+        watcher_boot_probe_host: "{{ '127.0.0.1' if watcher_boot_host in ['0.0.0.0', '::'] else watcher_boot_host }}"
+        watcher_http_probe_host: "{{ '127.0.0.1' if watcher_host in ['0.0.0.0', '::'] else watcher_host }}"
+
+    - name: Wait for watcher boot listener
+      ansible.builtin.wait_for:
+        host: "{{ watcher_boot_probe_host }}"
+        port: "{{ watcher_boot_port }}"
+        state: started
+        timeout: 3
+        connect_timeout: 1
+
+    - name: Wait for watcher HTTP listener
+      ansible.builtin.wait_for:
+        host: "{{ watcher_http_probe_host }}"
+        port: "{{ watcher_http_port }}"
+        state: started
+        timeout: 3
+        connect_timeout: 1
+
+    - name: Assert watcher runtime stays alive and binds expected ports
+      ansible.builtin.assert:
+        that:
+          - watcher_child_parts_1[0] == watcher_child_parts_2[0]
+          - watcher_child_parts_1[1] is not search('Z')
+          - watcher_child_parts_2[1] is not search('Z')
+        fail_msg: |
+          Watcher runtime is unhealthy.
+          sample_1={{ watcher_child_sample_1_lines | first }}
+          sample_2={{ watcher_child_sample_2_lines | first }}

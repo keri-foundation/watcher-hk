@@ -194,6 +194,9 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Local Ansible controller cache and collections
+ansible/.ansible/
+
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
@@ -208,5 +211,3 @@ __marimo__/
 
 # Ansible operator secrets (never commit)
 ansible/op.env
-# Local README duplicate (tracked on scaffolding branch)
-ansible/README.md

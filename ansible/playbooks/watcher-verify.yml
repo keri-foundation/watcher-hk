@@ -144,7 +144,7 @@
         host: "{{ watcher_boot_probe_host }}"
         port: "{{ watcher_boot_port }}"
         state: started
-        timeout: 3
+        timeout: 30
         connect_timeout: 1
 
     - name: Wait for watcher HTTP listener
@@ -152,7 +152,7 @@
         host: "{{ watcher_http_probe_host }}"
         port: "{{ watcher_http_port }}"
         state: started
-        timeout: 3
+        timeout: 30
         connect_timeout: 1
 
     - name: Assert watcher runtime stays alive and binds expected ports

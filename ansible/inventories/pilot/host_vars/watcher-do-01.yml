@@ -18,5 +18,5 @@ watcher_host: 0.0.0.0
 watcher_http_port: 7632
 watcher_boot_host: 127.0.0.1
 watcher_boot_port: 7631
-watcher_advertised_host: watcher-do-01.example.invalid
+watcher_advertised_host: "{{ ansible_host }}"
 watcher_debug: false

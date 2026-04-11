@@ -115,3 +115,29 @@ watcher-recent: ## Show a bounded recent watcher evidence snapshot: Circus state
 	@$(require_watcher_host)
 	@cd "$(ANSIBLE_DIR)" && SSH_AUTH_SOCK="$${SSH_AUTH_SOCK:-$(ONEPASSWORD_SSH_AUTH_SOCK)}" "$(ANSIBLE_WRAPPER)" \
 		bash -lc '$(ANSIBLE_ADHOC) "$(WATCHER_HOST)" -b -m shell -a '\''printf "=== circusctl ===\\n"; $(WATCHER_CIRCUSCTL_BIN) --endpoint $(WATCHER_CIRCUS_ENDPOINT) status; printf "\\n=== ports ===\\n"; ss -ltnp | grep -E "7631|7632" || true; printf "\\n=== journal (since $(WATCHER_RECENT_WINDOW)) ===\\n"; journalctl -u $(WATCHER_SYSTEMD_SERVICE) -b 0 --since "$(WATCHER_RECENT_WINDOW)" --no-pager'\'''
+
+# ── Molecule Integration Testing ─────────────────────────────────────
+
+MOLECULE_DIR := $(ANSIBLE_DIR)/roles/watcher_host
+
+##@ Molecule Integration Tests
+
+.PHONY: molecule-test
+molecule-test: ## Run full Molecule test cycle (create → converge → verify → destroy)
+	@cd "$(MOLECULE_DIR)" && molecule test
+
+.PHONY: molecule-converge
+molecule-converge: ## Create container and apply the role (idempotent — rerun to test changes)
+	@cd "$(MOLECULE_DIR)" && molecule converge
+
+.PHONY: molecule-verify
+molecule-verify: ## Run systemd-hardening verification against the running container
+	@cd "$(MOLECULE_DIR)" && molecule verify
+
+.PHONY: molecule-destroy
+molecule-destroy: ## Destroy the Molecule container
+	@cd "$(MOLECULE_DIR)" && molecule destroy
+
+.PHONY: molecule-login
+molecule-login: ## Open a shell in the running Molecule container
+	@cd "$(MOLECULE_DIR)" && molecule login

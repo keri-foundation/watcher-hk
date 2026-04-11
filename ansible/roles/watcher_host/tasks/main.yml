@@ -34,7 +34,16 @@
     owner: "{{ watcher_service_user }}"
     group: "{{ watcher_service_group }}"
     mode: preserve
-  loop: "{{ watcher_local_project_files }}"
+  loop: "{{ watcher_local_project_files | rejectattr('directory', 'defined') | list + (watcher_local_project_files | selectattr('directory', 'defined') | rejectattr('directory') | list) }}"
+
+- name: Copy local watcher project directories to the host
+  ansible.builtin.copy:
+    src: "{{ watcher_local_repo_src }}/{{ item.src }}/"
+    dest: "{{ watcher_repo_home }}/{{ item.dest }}/"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: preserve
+  loop: "{{ watcher_local_project_files | selectattr('directory', 'defined') | selectattr('directory') | list }}"
 
 - name: Ensure watcher repo tree ownership is consistent
   ansible.builtin.file:

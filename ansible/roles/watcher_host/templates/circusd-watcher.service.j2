@@ -25,7 +25,7 @@ ProtectKernelModules=true
 PrivateTmp=true
 RestrictSUIDSGID=true
 LockPersonality=true
-ReadWritePaths={{ watcher_config_root }} {{ watcher_keri_data_dir }} {{ watcher_runtime_dir }} {{ watcher_log_dir }}
+ReadWritePaths={{ watcher_config_root }} {{ watcher_keri_data_dir }} {{ watcher_runtime_dir }} {{ watcher_log_dir }} /usr/local/var/keri
 
 [Install]
 WantedBy=multi-user.target

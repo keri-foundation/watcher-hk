@@ -22,6 +22,7 @@ stop_signal = {{ watcher_stop_signal }}
 graceful_timeout = {{ watcher_graceful_timeout }}
 
 [env:watopnet-watcher]
+HOME = {{ watcher_keri_data_dir }}
 WATCHER_HOME = {{ watcher_repo_home }}
 WATOPNET_CONFIG_DIR = {{ watcher_config_root }}
 WATOPNET_BASE = {{ watcher_base }}

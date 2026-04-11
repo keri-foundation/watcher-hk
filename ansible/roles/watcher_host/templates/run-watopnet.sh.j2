@@ -12,6 +12,7 @@ WATOPNET_HTTP_PORT="${WATOPNET_HTTP_PORT:-{{ watcher_http_port }}}"
 WATOPNET_BOOT_HOST="${WATOPNET_BOOT_HOST:-{{ watcher_boot_host }}}"
 WATOPNET_BOOT_PORT="${WATOPNET_BOOT_PORT:-{{ watcher_boot_port }}}"
 
+export HOME="${HOME:-{{ watcher_keri_data_dir }}}"
 export KERI_BASER_MAP_SIZE=1099511627776
 {% if watcher_debug | default(false) %}
 export DEBUG_WATCHER=1

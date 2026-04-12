@@ -1,4 +1,10 @@
 ---
+- name: Refresh apt package cache on Debian hosts
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_facts.pkg_mgr == 'apt'
+
 - name: Install host packages
   ansible.builtin.package:
     name: "{{ watcher_system_packages }}"

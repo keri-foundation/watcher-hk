@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -o errexit
+set -o nounset
+set -o pipefail
+
+WATCHER_HOME="${WATCHER_HOME:-{{ watcher_repo_home }}}"
+WATOPNET_BIN="${WATOPNET_BIN:-{{ watcher_cli_bin }}}"
+WATOPNET_CONFIG_DIR="${WATOPNET_CONFIG_DIR:-{{ watcher_config_root }}}"
+WATOPNET_BASE="${WATOPNET_BASE:-{{ watcher_base }}}"
+WATOPNET_HOST="${WATOPNET_HOST:-{{ watcher_host }}}"
+WATOPNET_HTTP_PORT="${WATOPNET_HTTP_PORT:-{{ watcher_http_port }}}"
+WATOPNET_BOOT_HOST="${WATOPNET_BOOT_HOST:-{{ watcher_boot_host }}}"
+WATOPNET_BOOT_PORT="${WATOPNET_BOOT_PORT:-{{ watcher_boot_port }}}"
+
+export HOME="${HOME:-{{ watcher_keri_data_dir }}}"
+export KERI_BASER_MAP_SIZE=1099511627776
+{% if watcher_debug | default(false) %}
+export DEBUG_WATCHER=1
+{% else %}
+unset DEBUG_WATCHER || true
+{% endif %}
+ulimit -S -n 65536
+
+cd "${WATCHER_HOME}"
+
+exec "${WATOPNET_BIN}" start \
+    --config-dir "${WATOPNET_CONFIG_DIR}" \
+    --base "${WATOPNET_BASE}" \
+    --host "${WATOPNET_HOST}" \
+    --http "${WATOPNET_HTTP_PORT}" \
+    --boothost "${WATOPNET_BOOT_HOST}" \
+    --bootport "${WATOPNET_BOOT_PORT}"

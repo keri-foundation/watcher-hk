@@ -1,0 +1,85 @@
+watcher_service_user: keri
+watcher_service_group: keri
+watcher_service_shell: /bin/bash
+watcher_systemd_service_name: circusd-watcher
+
+watcher_repo_home: /opt/watcher-hk
+watcher_config_root: /etc/watopnet
+watcher_app_config_path: /etc/watopnet/keri/cf/main/watopnet.json
+watcher_circus_config_path: /etc/watopnet/circus-watcher.ini
+watcher_service_unit_path: /etc/systemd/system/circusd-watcher.service
+watcher_venv_path: /opt/watcher-hk/.venv
+watcher_wrapper_path: /opt/watcher-hk/ops/run-watopnet.sh
+watcher_runtime_dir: /var/run/watopnet-circus
+watcher_log_dir: /var/log/watopnet/watcher
+watcher_stdout_log_path: /var/log/watopnet/watcher/stdout.log
+watcher_stderr_log_path: /var/log/watopnet/watcher/stderr.log
+watcher_keri_data_dir: /var/lib/watopnet
+
+watcher_python_bootstrap_bin: python3.14
+watcher_python_bin: /opt/watcher-hk/.venv/bin/python
+watcher_pip_executable: /opt/watcher-hk/.venv/bin/pip
+watcher_circusd_bin: /opt/watcher-hk/.venv/bin/circusd
+watcher_circusctl_bin: /opt/watcher-hk/.venv/bin/circusctl
+watcher_cli_bin: /opt/watcher-hk/.venv/bin/watopnet
+
+watcher_circus_endpoint: ipc:///var/run/watopnet-circus/ctrl.sock
+watcher_circus_pubsub_endpoint: ipc:///var/run/watopnet-circus/pub.sock
+watcher_circus_stats_endpoint: ipc:///var/run/watopnet-circus/stats.sock
+watcher_circus_statsd: 0
+watcher_stop_signal: TERM
+watcher_graceful_timeout: 30
+
+watcher_system_packages:
+  - git
+  - rsync
+  - build-essential
+  - libsodium-dev
+  - python3.14
+  - python3.14-venv
+  - python3-pip
+
+watcher_python_packages:
+  - circus
+
+watcher_local_repo_src: "{{ playbook_dir }}/../.."
+watcher_local_project_files:
+  - src: pyproject.toml
+    dest: pyproject.toml
+  - src: README.md
+    dest: README.md
+  - src: LICENSE
+    dest: LICENSE
+  - src: src
+    dest: src
+    directory: true
+
+watcher_directories:
+  - path: "{{ watcher_repo_home }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0755"
+  - path: "{{ watcher_config_root }}/keri/cf/main"
+    owner: root
+    group: "{{ watcher_service_group }}"
+    mode: "0750"
+  - path: "{{ watcher_log_dir }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0750"
+  - path: "{{ watcher_keri_data_dir }}"
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0750"
+  - path: /usr/local/var/keri
+    owner: "{{ watcher_service_user }}"
+    group: "{{ watcher_service_group }}"
+    mode: "0750"
+
+watcher_required_host_vars:
+  - watcher_base
+  - watcher_host
+  - watcher_http_port
+  - watcher_boot_host
+  - watcher_boot_port
+  - watcher_advertised_host

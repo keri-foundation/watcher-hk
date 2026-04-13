@@ -1,0 +1,161 @@
+---
+dependency:
+  name: galaxy
+  options:
+    role-file: molecule/requirements.yml
+    requirements-file: molecule/collections.yml
+
+scenario:
+  test_sequence:
+    - dependency
+    - destroy
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy
+  destroy_sequence:
+    - destroy
+
+driver:
+  name: docker
+
+platforms:
+  - name: watcher-systemd
+    groups:
+      - watcher_hosts
+    image: molecule_local/watcher-ubuntu2510-systemd:latest
+    dockerfile: Dockerfile.j2
+    pre_build_image: false
+    command: /lib/systemd/systemd
+    override_command: false
+    cgroupns_mode: host
+    privileged: true
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    published_ports:
+      - "0.0.0.0:7631:7631/tcp"
+      - "0.0.0.0:7632:7632/tcp"
+    env:
+      container: docker
+
+provisioner:
+  name: ansible
+  env:
+    ANSIBLE_ROLES_PATH: ../../..
+  playbooks:
+    prepare: prepare.yml
+    converge: converge.yml
+    verify: verify.yml
+  inventory:
+    group_vars:
+      all:
+        # --- Service identity ---
+        watcher_service_user: keri
+        watcher_service_group: keri
+        watcher_service_shell: /bin/bash
+        watcher_systemd_service_name: circusd-watcher
+
+        # --- Filesystem layout ---
+        watcher_repo_home: /opt/watcher-hk
+        watcher_config_root: /etc/watopnet
+        watcher_app_config_path: /etc/watopnet/keri/cf/main/watopnet.json
+        watcher_circus_config_path: /etc/watopnet/circus-watcher.ini
+        watcher_service_unit_path: /etc/systemd/system/circusd-watcher.service
+        watcher_venv_path: /opt/watcher-hk/.venv
+        watcher_wrapper_path: /opt/watcher-hk/ops/run-watopnet.sh
+        watcher_runtime_dir: /var/run/watopnet-circus
+        watcher_log_dir: /var/log/watopnet/watcher
+        watcher_stdout_log_path: /var/log/watopnet/watcher/stdout.log
+        watcher_stderr_log_path: /var/log/watopnet/watcher/stderr.log
+        watcher_keri_data_dir: /var/lib/watopnet
+
+        # --- Python tooling ---
+        watcher_python_bootstrap_bin: python3.14
+        watcher_python_bin: /opt/watcher-hk/.venv/bin/python
+        watcher_pip_executable: /opt/watcher-hk/.venv/bin/pip
+        watcher_circusd_bin: /opt/watcher-hk/.venv/bin/circusd
+        watcher_circusctl_bin: /opt/watcher-hk/.venv/bin/circusctl
+        watcher_cli_bin: /opt/watcher-hk/.venv/bin/watopnet
+
+        # --- Circus ---
+        watcher_circus_endpoint: "ipc:///var/run/watopnet-circus/ctrl.sock"
+        watcher_circus_pubsub_endpoint: "ipc:///var/run/watopnet-circus/pub.sock"
+        watcher_circus_stats_endpoint: "ipc:///var/run/watopnet-circus/stats.sock"
+        watcher_circus_statsd: 0
+        watcher_stop_signal: TERM
+        watcher_graceful_timeout: 30
+
+        # --- OS packages ---
+        watcher_system_packages:
+          - git
+          - rsync
+          - build-essential
+          - libsodium-dev
+          - python3.14
+          - python3.14-venv
+
+        # --- Python packages ---
+        watcher_python_packages:
+          - circus
+
+        # --- Project source files ---
+        watcher_local_repo_src: "{{ playbook_dir }}/../../../../.."
+        watcher_local_project_files:
+          - src: pyproject.toml
+            dest: pyproject.toml
+          - src: README.md
+            dest: README.md
+          - src: LICENSE
+            dest: LICENSE
+          - src: src
+            dest: src
+            directory: true
+
+        # --- Managed directories ---
+        watcher_directories:
+          - path: "{{ watcher_repo_home }}"
+            owner: "{{ watcher_service_user }}"
+            group: "{{ watcher_service_group }}"
+            mode: "0755"
+          - path: "{{ watcher_config_root }}/keri/cf/main"
+            owner: root
+            group: "{{ watcher_service_group }}"
+            mode: "0750"
+          - path: "{{ watcher_log_dir }}"
+            owner: "{{ watcher_service_user }}"
+            group: "{{ watcher_service_group }}"
+            mode: "0750"
+          - path: "{{ watcher_keri_data_dir }}"
+            owner: "{{ watcher_service_user }}"
+            group: "{{ watcher_service_group }}"
+            mode: "0750"
+          - path: /usr/local/var/keri
+            owner: "{{ watcher_service_user }}"
+            group: "{{ watcher_service_group }}"
+            mode: "0750"
+
+        # --- Host-specific (overrides for Molecule) ---
+        watcher_base: watcher-molecule
+        watcher_host: "0.0.0.0"
+        watcher_http_port: 7632
+        watcher_boot_host: "127.0.0.1"
+        watcher_boot_port: 7631
+        watcher_advertised_host: "127.0.0.1"
+        watcher_debug: false
+
+        # --- Required host vars check ---
+        watcher_required_host_vars:
+          - watcher_base
+          - watcher_host
+          - watcher_http_port
+          - watcher_boot_host
+          - watcher_boot_port
+          - watcher_advertised_host
+
+verifier:
+  name: ansible

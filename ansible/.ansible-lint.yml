@@ -1,0 +1,8 @@
+---
+profile: production
+exclude_paths:
+  - .cache/
+warn_list:
+  - experimental
+offline: true
+use_default_rules: true

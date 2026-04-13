@@ -1,0 +1,266 @@
+---
+# Molecule verify playbook for watcher_host role.
+#
+# This validates the integration boundary between systemd security hardening
+# and the Python runtime's filesystem access patterns. It catches the class of
+# error documented in ADR-056: ProtectSystem=strict + ProtectHome=true vs.
+# hio's hardcoded /usr/local/var/ default paths.
+
+- name: Verify watcher service under systemd hardening
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    # ── systemd unit loaded and running ──────────────────────────────
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
+    - name: Assert circusd-watcher is running and enabled
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['circusd-watcher.service'] is defined
+          - ansible_facts.services['circusd-watcher.service'].state == 'running'
+          - ansible_facts.services['circusd-watcher.service'].status == 'enabled'
+        fail_msg: "circusd-watcher service is not running/enabled"
+
+    # ── systemd security directives active ───────────────────────────
+    - name: Read rendered systemd unit
+      ansible.builtin.slurp:
+        src: /etc/systemd/system/circusd-watcher.service
+      register: watcher_unit_content
+
+    - name: Decode unit content
+      ansible.builtin.set_fact:
+        watcher_unit_text: "{{ watcher_unit_content.content | b64decode }}"
+
+    - name: Assert security hardening directives are present
+      ansible.builtin.assert:
+        that:
+          - "'ProtectSystem=strict' in watcher_unit_text"
+          - "'ProtectHome=true' in watcher_unit_text"
+          - "'NoNewPrivileges=true' in watcher_unit_text"
+          - "'/usr/local/var/keri' in watcher_unit_text"
+        fail_msg: >
+          Systemd unit is missing expected security directives or
+          /usr/local/var/keri is not in ReadWritePaths
+
+    # ── IPC control socket and logs exist ────────────────────────────
+    - name: Check Circus IPC control socket
+      ansible.builtin.stat:
+        path: /var/run/watopnet-circus/ctrl.sock
+      register: watcher_ctrl_sock
+
+    - name: Assert IPC socket exists
+      ansible.builtin.assert:
+        that:
+          - watcher_ctrl_sock.stat.exists
+          - watcher_ctrl_sock.stat.issock | default(false)
+        fail_msg: "Circus control socket missing at /var/run/watopnet-circus/ctrl.sock"
+
+    - name: Check stdout log file
+      ansible.builtin.stat:
+        path: "{{ watcher_stdout_log_path }}"
+      register: watcher_stdout
+
+    - name: Check stderr log file
+      ansible.builtin.stat:
+        path: "{{ watcher_stderr_log_path }}"
+      register: watcher_stderr
+
+    - name: Assert log files exist
+      ansible.builtin.assert:
+        that:
+          - watcher_stdout.stat.exists
+          - watcher_stderr.stat.exists
+        fail_msg: "Watcher log files are missing"
+
+    # ── Circus reports the watcher as active ─────────────────────────
+    - name: Query Circus watcher status
+      ansible.builtin.command:
+        argv:
+          - "{{ watcher_circusctl_bin }}"
+          - --endpoint
+          - "{{ watcher_circus_endpoint }}"
+          - status
+      register: watcher_circus_status
+      changed_when: false
+
+    - name: Assert watopnet-watcher is active in Circus
+      ansible.builtin.assert:
+        that:
+          - "'watopnet-watcher' in watcher_circus_status.stdout"
+        fail_msg: "Circus did not report watopnet-watcher"
+
+    # ── Process is alive and not a zombie ────────────────────────────
+    - name: Read systemd MainPID
+      ansible.builtin.command:
+        argv:
+          - systemctl
+          - show
+          - -p
+          - MainPID
+          - --value
+          - circusd-watcher
+      register: watcher_main_pid
+      changed_when: false
+
+    - name: Sample watcher child process (first)
+      ansible.builtin.command:
+        argv:
+          - ps
+          - -ww
+          - --ppid
+          - "{{ watcher_main_pid.stdout | trim }}"
+          - -o
+          - pid=,stat=,args=
+      register: watcher_child_1
+      changed_when: false
+
+    - name: Filter non-stats children
+      ansible.builtin.set_fact:
+        watcher_children_1: >-
+          {{
+            watcher_child_1.stdout_lines
+            | reject('search', 'circus import stats')
+            | list
+          }}
+
+    - name: Pause 3 seconds for stability check
+      ansible.builtin.pause:
+        seconds: 3
+
+    - name: Sample watcher child process (second)
+      ansible.builtin.command:
+        argv:
+          - ps
+          - -ww
+          - --ppid
+          - "{{ watcher_main_pid.stdout | trim }}"
+          - -o
+          - pid=,stat=,args=
+      register: watcher_child_2
+      changed_when: false
+
+    - name: Filter non-stats children (second sample)
+      ansible.builtin.set_fact:
+        watcher_children_2: >-
+          {{
+            watcher_child_2.stdout_lines
+            | reject('search', 'circus import stats')
+            | list
+          }}
+
+    - name: Parse child PIDs
+      ansible.builtin.set_fact:
+        child_pid_1: "{{ (watcher_children_1 | first).split()[0] }}"
+        child_pid_2: "{{ (watcher_children_2 | first).split()[0] }}"
+        child_stat_1: "{{ (watcher_children_1 | first).split()[1] }}"
+        child_stat_2: "{{ (watcher_children_2 | first).split()[1] }}"
+
+    - name: Assert process is stable (same PID, not zombie)
+      ansible.builtin.assert:
+        that:
+          - child_pid_1 == child_pid_2
+          - child_stat_1 is not search('Z')
+          - child_stat_2 is not search('Z')
+        fail_msg: >
+          Watcher process is crash-looping or zombie.
+          PID1={{ child_pid_1 }} STAT1={{ child_stat_1 }}
+          PID2={{ child_pid_2 }} STAT2={{ child_stat_2 }}
+
+    # ── Ports are bound ──────────────────────────────────────────────
+    - name: Wait for boot port 7631
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 7631
+        state: started
+        timeout: 30
+        connect_timeout: 1
+
+    - name: Wait for HTTP port 7632
+      ansible.builtin.wait_for:
+        host: 0.0.0.0
+        port: 7632
+        state: started
+        timeout: 30
+        connect_timeout: 1
+
+    # ── No Permission Denied errors in fresh stdout ──────────────────
+    - name: Truncate stdout log to check for fresh errors
+      ansible.builtin.command:
+        argv:
+          - truncate
+          - -s
+          - "0"
+          - "{{ watcher_stdout_log_path }}"
+      changed_when: true
+
+    - name: Wait 5 seconds for fresh log output
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Read fresh stdout log content
+      ansible.builtin.slurp:
+        src: "{{ watcher_stdout_log_path }}"
+      register: fresh_stdout
+
+    - name: Assert no Permission Denied errors in fresh output
+      ansible.builtin.assert:
+        that:
+          - "'Permission denied' not in (fresh_stdout.content | b64decode)"
+        fail_msg: >
+          Fresh stdout log contains 'Permission denied' errors.
+          This indicates filesystem paths are still blocked by systemd hardening.
+          Content: {{ fresh_stdout.content | b64decode }}
+
+    # ── hio data directories are writable under ProtectSystem=strict ─
+    - name: Check /usr/local/var/keri is writable by service user
+      ansible.builtin.command:
+        argv:
+          - su
+          - -s
+          - /bin/bash
+          - -c
+          - "test -w /usr/local/var/keri && echo WRITABLE || echo NOT_WRITABLE"
+          - "{{ watcher_service_user }}"
+      register: keri_dir_check
+      changed_when: false
+
+    - name: Assert /usr/local/var/keri is writable
+      ansible.builtin.assert:
+        that:
+          - "'WRITABLE' in keri_dir_check.stdout"
+        fail_msg: >
+          /usr/local/var/keri is not writable by {{ watcher_service_user }}.
+          This will cause hio Filer to fall back to $HOME which is blocked
+          by ProtectHome=true.
+
+    # ── Circus env has HOME set ──────────────────────────────────────
+    - name: Read rendered Circus config
+      ansible.builtin.slurp:
+        src: "{{ watcher_circus_config_path }}"
+      register: circus_config_content
+
+    - name: Assert HOME is set in Circus env
+      ansible.builtin.assert:
+        that:
+          - "'HOME' in (circus_config_content.content | b64decode)"
+        fail_msg: >
+          Circus config does not set HOME in [env:watopnet-watcher].
+          Under ProtectHome=true, hio's fallback to $HOME will fail if
+          HOME points to /home/<user>.
+
+    - name: Read watcher child process environment
+      ansible.builtin.slurp:
+        src: "/proc/{{ child_pid_1 }}/environ"
+      register: watcher_child_environ
+
+    - name: Assert running watcher process has safe HOME
+      ansible.builtin.assert:
+        that:
+            - "('HOME=' ~ watcher_keri_data_dir) in ((watcher_child_environ.content | b64decode).replace('\u0000', '\n'))"
+        fail_msg: >
+          Running watcher process does not have HOME={{ watcher_keri_data_dir }}.
+          That weakens the ProtectHome=true fallback contract even if the Circus
+          config file looks correct.

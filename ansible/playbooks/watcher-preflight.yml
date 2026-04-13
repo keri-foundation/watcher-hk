@@ -1,0 +1,82 @@
+---
+- name: Preflight host-first watcher pilot
+  hosts: watcher_hosts
+  become: false
+  gather_facts: false
+
+  vars:
+    transport_user: "{{ ansible_user | default('') | string | trim }}"
+    transport_host: "{{ ansible_host | default('') | string | trim }}"
+    transport_become_method: "{{ ansible_become_method | default('') | string | trim }}"
+    transport_become_user: "{{ ansible_become_user | default('') | string | trim }}"
+    transport_become_password: "{{ ansible_become_password | default('') | string | trim }}"
+
+  tasks:
+    - name: Assert pilot inventory resolves a host address
+      ansible.builtin.assert:
+        that:
+          - transport_host | length > 0
+        fail_msg: Resolve ansible_host through inventory generation or controller-side env before running the pilot
+
+    - name: Assert pilot inventory uses a non-root login user
+      ansible.builtin.assert:
+        that:
+          - transport_user | length > 0
+          - transport_user != 'root'
+        fail_msg: The pilot must use a non-root SSH login user
+
+    - name: Assert privilege escalation stays on a validated root path
+      ansible.builtin.assert:
+        that:
+          - transport_become_method in ['su', 'sudo']
+          - transport_become_user == 'root'
+        fail_msg: The pilot must escalate to root using either su or sudo
+
+    - name: Assert su-based legacy path still has a become password
+      ansible.builtin.assert:
+        that:
+          - transport_become_password | length > 0
+        fail_msg: Resolve WATCHER_ANSIBLE_BECOME_PASSWORD through op run before running the legacy su path
+      when: transport_become_method == 'su'
+
+    - name: Assert modern sudo path stays passwordless on the controller side
+      ansible.builtin.assert:
+        that:
+          - transport_become_password | length == 0
+        fail_msg: The sudo path should not require a controller-side become password
+      when: transport_become_method == 'sudo'
+
+    - name: Assert required watcher variables are present
+      ansible.builtin.assert:
+        that:
+          - lookup('vars', item, default='') | string | length > 0
+        fail_msg: "Required pilot variable is missing: {{ item }}"
+      loop: "{{ watcher_required_host_vars }}"
+
+    - name: Assert host ports are distinct
+      ansible.builtin.assert:
+        that:
+          - watcher_boot_port | int != watcher_http_port | int
+        fail_msg: watcher_boot_port and watcher_http_port must be different
+
+    - name: Assert watcher local repo source is configured
+      ansible.builtin.assert:
+        that:
+          - watcher_local_repo_src is defined
+          - watcher_local_repo_src | string | length > 0
+        fail_msg: watcher_local_repo_src must point at the controller-side watcher checkout
+
+    - name: Check controller-side watcher repo source
+      ansible.builtin.stat:
+        path: "{{ watcher_local_repo_src }}"
+      delegate_to: localhost
+      register: watcher_local_repo_src_stat
+      run_once: true
+
+    - name: Assert controller-side watcher repo source exists
+      ansible.builtin.assert:
+        that:
+          - watcher_local_repo_src_stat.stat.exists
+          - watcher_local_repo_src_stat.stat.isdir | default(false)
+        fail_msg: watcher_local_repo_src must resolve to a local watcher-hk checkout on the controller
+      run_once: true

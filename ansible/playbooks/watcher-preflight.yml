@@ -69,7 +69,9 @@
     - name: Check controller-side watcher repo source
       ansible.builtin.stat:
         path: "{{ watcher_local_repo_src }}"
-      delegate_to: localhost
+      connection: local
+      vars:
+        ansible_python_interpreter: "{{ ansible_playbook_python }}"
       register: watcher_local_repo_src_stat
       run_once: true
 

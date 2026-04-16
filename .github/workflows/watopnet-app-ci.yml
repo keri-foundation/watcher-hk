@@ -40,7 +40,7 @@ jobs:
           HKSVC_PULL_TOKEN: ${{ secrets.HKSVC_PULL_TOKEN }}
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir flake8 pytest coverage
+          pip install --no-cache-dir -e ".[dev]" flake8 coverage
           if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
 
       - name: Check disk space after install
@@ -74,7 +74,7 @@ jobs:
           HKSVC_PULL_TOKEN: ${{ secrets.HKSVC_PULL_TOKEN }}
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir pytest pytest-cov
+          pip install --no-cache-dir -e . pytest-cov
           if [ -f requirements-dev.txt ]; then pip install --no-cache-dir -r requirements-dev.txt; fi
 
       - name: Check disk space after install

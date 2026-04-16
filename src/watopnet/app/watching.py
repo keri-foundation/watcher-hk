@@ -15,7 +15,7 @@ from dataclasses import asdict
 from urllib.parse import urlsplit
 
 import falcon
-from hio.base import doing
+from hio.base import doing, tyming
 from hio.core import http
 from hio.help import decking
 from keri import help
@@ -231,7 +231,7 @@ class Watchery(doing.DoDoer):
 
     def reload(self):
         """Load all watcher records from the database and instantiate Watcher doers."""
-        for said, wat in self.db.wats.getItemIter():
+        for said, wat in self.db.wats.getTopItemIter():
             hby = habbing.Habery(name=wat.name, base=self.base, temp=self.temp)
             hab = hby.habByName(wat.name)
 
@@ -397,6 +397,7 @@ class Watcher(doing.DoDoer):
             exc=self.exc,
             rvy=self.rvy,
             vry=self.verifier,
+            version=kering.Vrsn_1_0,
         )
 
         self.oobiery = Oobiery(self.hby, rvy=self.rvy)
@@ -486,7 +487,7 @@ class SentinalDoer(doing.DoDoer):
 
     def watchWatched(self):
         """Launch a Sentinal for each enabled observed AID that is due for a check."""
-        for (_, _, oid), observed in self.hby.db.obvs.getItemIter(
+        for (_, _, oid), observed in self.hby.db.obvs.getTopItemIter(
             keys=(
                 self.cid,
                 self.hab.pre,
@@ -508,7 +509,7 @@ class SentinalDoer(doing.DoDoer):
 
     def watchControllers(self):
         """Launch a Sentinal for the controller AID if it is due for a check."""
-        for (_, _), dater in self.db.cids.getItemIter(keys=(self.hab.pre, self.cid)):
+        for (_, _), dater in self.db.cids.getTopItemIter(keys=(self.hab.pre, self.cid)):
             if self.cid not in self.sentinals:
                 dtnow = helping.nowUTC()
                 dte = helping.fromIso8601(dater.dts)
@@ -773,23 +774,38 @@ class Sentinal(doing.DoDoer):
                 state=States.unresponsive,
             )
 
-            receiptor = agenting.Receiptor(hby=self.hby)
-            self.extend([receiptor])
-
             # Check for Key State from this Witness and remove if exists
-            saider = self.hby.db.knas.get(keys)
+            saider = self.hab.db.knas.get(keys)
             if saider is not None:
-                self.hby.db.knas.rem(keys)
-                self.hby.db.ksns.rem((saider.qb64,))
+                self.hab.db.knas.rem(keys)
+                self.hab.db.ksns.rem((saider.qb64,))
 
-            yield from receiptor.ksn(pre=self.oid, src=self.hab.pre, wit=wit)
+            witer = agenting.messenger(self.hab, wit)
+            self.extend([witer])
 
-            self.remove([receiptor])
+            msg = self.hab.query(pre=self.oid, src=wit, route="ksn")
+            witer.msgs.append(bytearray(msg))
 
-            if (saider := self.hab.db.knas.get(keys)) is None:
-                witQuery.error = "No response received within timeout"
-                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+            sendTymer = tyming.Tymer(tymth=self.tymth, duration=10.0)
+            while not witer.idle and not sendTymer.expired:
+                yield self.tock
 
+            self.remove([witer])
+
+            saider = None
+            responseTymer = tyming.Tymer(tymth=self.tymth, duration=10.0)
+            while True:
+                if (saider := self.hab.db.knas.get(keys)) is not None:
+                    break
+
+                if responseTymer.expired:
+                    witQuery.error = "No response received within timeout"
+                    self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+                    break
+
+                yield self.tock
+
+            if saider is None:
                 continue
 
             mystate = kever.state()
@@ -1025,7 +1041,7 @@ class WatcherStatusEnd:
         aids_data = {}
         latest_query_time = None
 
-        for (watcher_id, aid, wit), query_record in watcher.db.witq.getItemIter(
+        for (watcher_id, aid, wit), query_record in watcher.db.witq.getTopItemIter(
             keys=(eid,)
         ):
 

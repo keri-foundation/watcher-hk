@@ -105,9 +105,9 @@ class Baser(dbing.LMDBer):
         """Reopen database and initialize sub-dbs."""
         super(Baser, self).reopen(**kwa)
 
-        self.ips = koming.Komer(db=self, subkey="ips.", schema=Requests)
-        self.wats = koming.Komer(db=self, subkey="wats.", schema=Wat)
+        self.ips = koming.Komer(db=self, subkey="ips.", klas=Requests)
+        self.wats = koming.Komer(db=self, subkey="wats.", klas=Wat)
         self.cids = subing.CesrSuber(db=self, subkey="cids.", klas=coring.Dater)
-        self.witq = koming.Komer(db=self, subkey="witq.", schema=WitnessQuery)
+        self.witq = koming.Komer(db=self, subkey="witq.", klas=WitnessQuery)
 
         return self.env

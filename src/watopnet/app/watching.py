@@ -231,7 +231,7 @@ class Watchery(doing.DoDoer):
 
     def reload(self):
         """Load all watcher records from the database and instantiate Watcher doers."""
-        for said, wat in self.db.wats.getTopItemIter():
+        for said, wat in self.db.wats.getItemIter():
             hby = habbing.Habery(name=wat.name, base=self.base, temp=self.temp)
             hab = hby.habByName(wat.name)
 
@@ -397,7 +397,6 @@ class Watcher(doing.DoDoer):
             exc=self.exc,
             rvy=self.rvy,
             vry=self.verifier,
-            version=kering.Vrsn_1_0,
         )
 
         self.oobiery = Oobiery(self.hby, rvy=self.rvy)
@@ -487,7 +486,7 @@ class SentinalDoer(doing.DoDoer):
 
     def watchWatched(self):
         """Launch a Sentinal for each enabled observed AID that is due for a check."""
-        for (_, _, oid), observed in self.hby.db.obvs.getTopItemIter(
+        for (_, _, oid), observed in self.hby.db.obvs.getItemIter(
             keys=(
                 self.cid,
                 self.hab.pre,
@@ -509,7 +508,7 @@ class SentinalDoer(doing.DoDoer):
 
     def watchControllers(self):
         """Launch a Sentinal for the controller AID if it is due for a check."""
-        for (_, _), dater in self.db.cids.getTopItemIter(keys=(self.hab.pre, self.cid)):
+        for (_, _), dater in self.db.cids.getItemIter(keys=(self.hab.pre, self.cid)):
             if self.cid not in self.sentinals:
                 dtnow = helping.nowUTC()
                 dte = helping.fromIso8601(dater.dts)
@@ -1041,7 +1040,7 @@ class WatcherStatusEnd:
         aids_data = {}
         latest_query_time = None
 
-        for (watcher_id, aid, wit), query_record in watcher.db.witq.getTopItemIter(
+        for (watcher_id, aid, wit), query_record in watcher.db.witq.getItemIter(
             keys=(eid,)
         ):
 

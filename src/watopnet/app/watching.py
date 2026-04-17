@@ -15,7 +15,7 @@ from dataclasses import asdict
 from urllib.parse import urlsplit
 
 import falcon
-from hio.base import doing
+from hio.base import doing, tyming
 from hio.core import http
 from hio.help import decking
 from keri import help
@@ -773,23 +773,38 @@ class Sentinal(doing.DoDoer):
                 state=States.unresponsive,
             )
 
-            receiptor = agenting.Receiptor(hby=self.hby)
-            self.extend([receiptor])
-
             # Check for Key State from this Witness and remove if exists
-            saider = self.hby.db.knas.get(keys)
+            saider = self.hab.db.knas.get(keys)
             if saider is not None:
-                self.hby.db.knas.rem(keys)
-                self.hby.db.ksns.rem((saider.qb64,))
+                self.hab.db.knas.rem(keys)
+                self.hab.db.ksns.rem((saider.qb64,))
 
-            yield from receiptor.ksn(pre=self.oid, src=self.hab.pre, wit=wit)
+            witer = agenting.messenger(self.hab, wit)
+            self.extend([witer])
 
-            self.remove([receiptor])
+            msg = self.hab.query(pre=self.oid, src=wit, route="ksn")
+            witer.msgs.append(bytearray(msg))
 
-            if (saider := self.hab.db.knas.get(keys)) is None:
-                witQuery.error = "No response received within timeout"
-                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+            sendTymer = tyming.Tymer(tymth=self.tymth, duration=10.0)
+            while not witer.idle and not sendTymer.expired:
+                yield self.tock
 
+            self.remove([witer])
+
+            saider = None
+            responseTymer = tyming.Tymer(tymth=self.tymth, duration=10.0)
+            while True:
+                if (saider := self.hab.db.knas.get(keys)) is not None:
+                    break
+
+                if responseTymer.expired:
+                    witQuery.error = "No response received within timeout"
+                    self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+                    break
+
+                yield self.tock
+
+            if saider is None:
                 continue
 
             mystate = kever.state()

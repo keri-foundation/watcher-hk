@@ -8,6 +8,7 @@ testing watopnet.core.watching package
 from types import SimpleNamespace
 
 import pytest
+from keri import kering
 from keri.app import habbing
 from keri.core import eventing
 from watopnet.core import basing
@@ -273,3 +274,69 @@ def test_sentinal_waits_for_delayed_witness_state(monkeypatch):
     assert query.response_received is True
     assert query.state == States.even
     assert query.keystate == "witness-state"
+
+
+def test_sentinal_pins_unresolved_witness_endpoint_without_crashing(monkeypatch):
+    class FakeWitnessQueryStore:
+        def __init__(self):
+            self.calls = []
+
+        def pin(self, *, keys, val):
+            self.calls.append((keys, val))
+
+    witq = FakeWitnessQueryStore()
+
+    class FakeKever:
+        wits = ["WIT_1"]
+        sn = 0
+
+        @staticmethod
+        def state():
+            return "local-state"
+
+    query_calls = []
+
+    class FakeHab:
+        pre = "WATCHER_AID"
+        db = SimpleNamespace(
+            knas=SimpleNamespace(get=lambda keys: None, rem=lambda keys: None),
+            ksns=SimpleNamespace(rem=lambda keys: None),
+        )
+        kever = FakeKever()
+
+        @staticmethod
+        def query(*, pre, src, route):
+            query_calls.append((pre, src, route))
+            return b"ksn-query"
+
+    def fake_messenger(hab, wit):
+        raise kering.ConfigurationError(
+            f"unable to find a valid endpoint for witness={wit}"
+        )
+
+    monkeypatch.setattr("watopnet.app.watching.agenting.messenger", fake_messenger)
+
+    sentinal = Sentinal(
+        hby=SimpleNamespace(kevers={"OBSERVED_AID": FakeKever()}),
+        hab=FakeHab(),
+        oid="OBSERVED_AID",
+        cid="CONTROLLER_AID",
+        oobi="http://watcher.example/oobi",
+        db=SimpleNamespace(witq=witq),
+    )
+    monkeypatch.setattr(sentinal, "extend", lambda doers: None)
+    monkeypatch.setattr(sentinal, "remove", lambda doers: None)
+
+    do = sentinal.watch(lambda: 0.0, tock=0.0)
+    assert next(do) == 0.0
+    with pytest.raises(StopIteration) as stop:
+        next(do)
+
+    assert stop.value.value is True
+    assert query_calls == []
+    assert len(witq.calls) == 1
+    keys, query = witq.calls[0]
+    assert keys == ("WATCHER_AID", "OBSERVED_AID", "WIT_1")
+    assert query.response_received is False
+    assert query.state == States.unresponsive
+    assert query.error == "Missing witness endpoint: unable to find a valid endpoint for witness=WIT_1"

@@ -86,7 +86,7 @@ def setup(
         list: doers ready to run under a Doist event loop
     """
 
-    db = basing.Baser(name="watopnet")
+    db = basing.Baser(name="watopnet", base=base)
     dbDoer = BaserDoer(db)
 
     cf = configing.Configer(name=db.name, headDirPath=headDirPath)
@@ -779,7 +779,12 @@ class Sentinal(doing.DoDoer):
                 self.hab.db.knas.rem(keys)
                 self.hab.db.ksns.rem((saider.qb64,))
 
-            witer = agenting.messenger(self.hab, wit)
+            try:
+                witer = agenting.messenger(self.hab, wit)
+            except kering.ConfigurationError as ex:
+                witQuery.error = f"Missing witness endpoint: {ex}"
+                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+                continue
             self.extend([witer])
 
             msg = self.hab.query(pre=self.oid, src=wit, route="ksn")

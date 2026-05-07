@@ -12,7 +12,7 @@ import json
 import random
 from collections import namedtuple
 from dataclasses import asdict
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import urlsplit
 
 import falcon
 from hio.base import doing, tyming
@@ -747,7 +747,7 @@ class Sentinal(doing.DoDoer):
         try:
             client.request(
                 method="GET",
-                path=f"/ksn?{urlencode({'pre': pre})}",
+                path=f"/ksn?pre={pre}",
                 headers={CESR_DESTINATION_HEADER: wit},
             )
 

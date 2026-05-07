@@ -21,10 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python 3.12.6
+      - name: Set up Python 3.14
         uses: actions/setup-python@v2
         with:
-          python-version: 3.12.6
+          python-version: '3.14'
 
       - name: Install libsodium (macOS)
         if: runner.os == 'macOS'
@@ -61,10 +61,10 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Set up Python 3.12.6
+      - name: Set up Python 3.14
         uses: actions/setup-python@v2
         with:
-          python-version: 3.12.6
+          python-version: '3.14'
 
       - name: Check disk space before install
         run: df -h

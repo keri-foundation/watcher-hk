@@ -8,7 +8,9 @@ Core watcher orchestration: dual HTTP server setup, Watchery lifecycle managemen
 per-watcher Doer trees, witness-polling Sentinals, and boot API endpoints.
 """
 import datetime
+import errno
 import json
+import os
 import random
 from collections import namedtuple
 from dataclasses import asdict
@@ -33,6 +35,22 @@ from watopnet.core import basing, httping, oobing
 from watopnet.core.httping import HttpEnd
 
 logger = help.ogler.getLogger()
+
+FD_EXHAUSTION_ERRNOS = {errno.EMFILE, errno.ENFILE}
+
+
+def _isFdExhaustion(exc):
+    seen = set()
+    current = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno in FD_EXHAUSTION_ERRNOS:
+            return True
+        if "Too many open files" in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
 
 Stateage = namedtuple("Stateage", "even ahead behind duplicitous unresponsive")
 States = Stateage(
@@ -229,6 +247,36 @@ class Watchery(doing.DoDoer):
         doers = list(self.wats.values())
 
         super(Watchery, self).__init__(doers=doers, always=True, temp=temp)
+
+    def _logFdExhaustion(self, aid):
+        """Log process file descriptor state after an FD exhaustion failure."""
+        soft = None
+        hard = None
+        try:
+            import resource
+
+            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        except (ImportError, OSError, ValueError):
+            pass
+
+        count = None
+        for path in ("/proc/self/fd", "/dev/fd"):
+            try:
+                count = sum(1 for name in os.listdir(path) if name.isdigit())
+                break
+            except OSError:
+                continue
+
+        headroom = None
+        if count is not None and soft is not None and 0 <= soft < 2**60:
+            headroom = max(soft - count, 0)
+
+        logger.exception(
+            "Watcher provisioning failed due to file descriptor exhaustion: "
+            f"controller={aid} active_watchers={len(self.wats)} "
+            f"fd_count={count} fd_soft_limit={soft} fd_hard_limit={hard} "
+            f"fd_headroom={headroom}"
+        )
 
     def reload(self):
         """Load all watcher records from the database and instantiate Watcher doers."""
@@ -975,6 +1023,14 @@ class WatcherCollectionEnd:
             watcher = self.wty.createWatcher(cid=aid)
         except kering.ConfigurationError as e:
             raise falcon.HTTPBadRequest(description=e.args[0])
+        except Exception as e:
+            if not _isFdExhaustion(e):
+                raise
+            self.wty._logFdExhaustion(aid)
+            raise falcon.HTTPServiceUnavailable(
+                title="Watcher service unavailable",
+                description="Watcher service file descriptor capacity exhausted.",
+            ) from e
 
         if oobi:
             watcher.hby.db.oobis.pin(

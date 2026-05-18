@@ -128,7 +128,7 @@ def test_watcher_parser_accepts_keri10_inception_and_add_reply(mockHelpingNowUTC
 
         assert watcher.psr.version == kering.Vrsn_1_0
 
-        watcher.psr.parseOne(bobHab.makeOwnInception())
+        watcher.psr.parseOne(bobHab.msgOwnInception())
         watcher.psr.parseOne(bobHab.endorse(serder))
 
         keys = (bobHab.pre, watHab.pre, eveHab.pre)

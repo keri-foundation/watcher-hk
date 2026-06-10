@@ -8,9 +8,7 @@ Core watcher orchestration: dual HTTP server setup, Watchery lifecycle managemen
 per-watcher Doer trees, witness-polling Sentinals, and boot API endpoints.
 """
 import datetime
-import errno
 import json
-import os
 import random
 from collections import namedtuple
 from dataclasses import asdict
@@ -35,21 +33,6 @@ from watopnet.core import basing, httping, oobing
 from watopnet.core.httping import HttpEnd
 
 logger = help.ogler.getLogger()
-
-FD_EXHAUSTION_ERRNOS = {errno.EMFILE, errno.ENFILE}
-
-
-def _isFdExhaustion(exc):
-    seen = set()
-    current = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if isinstance(current, OSError) and current.errno in FD_EXHAUSTION_ERRNOS:
-            return True
-        if "Too many open files" in str(current):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 Stateage = namedtuple("Stateage", "even ahead behind duplicitous unresponsive")
@@ -200,7 +183,6 @@ class Watchery(doing.DoDoer):
         cf=None,
         headDirPath=None,
         scheme=kering.Schemes.http,
-        qrycues=None,
         host="127.0.0.1",
         httpport=7632,
         tcpport=7633,
@@ -213,7 +195,6 @@ class Watchery(doing.DoDoer):
             cf (Configer | None): KERI configuration file reader
             headDirPath (str | None): optional override for the keystore head directory
             scheme (str): URL scheme advertised by this watcher (http or https)
-            qrycues (Deck | None): shared deck for query-reply cues
             host (str): hostname advertised in OOBI URLs
             httpport (int): HTTP port advertised in OOBI URLs
             tcpport (int): TCP port for direct connections
@@ -249,44 +230,12 @@ class Watchery(doing.DoDoer):
                         splits = urlsplit(url)
                         self.tcpport = splits.port
 
-        self.qrycues = qrycues if qrycues is not None else decking.Deck()
-
         self.wats = dict()
 
         self.reload()
         doers = list(self.wats.values())
 
         super(Watchery, self).__init__(doers=doers, always=True, temp=temp)
-
-    def _logFdExhaustion(self, aid):
-        """Log process file descriptor state after an FD exhaustion failure."""
-        soft = None
-        hard = None
-        try:
-            import resource
-
-            soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        except (ImportError, OSError, ValueError):
-            pass
-
-        count = None
-        for path in ("/proc/self/fd", "/dev/fd"):
-            try:
-                count = sum(1 for name in os.listdir(path) if name.isdigit())
-                break
-            except OSError:
-                continue
-
-        headroom = None
-        if count is not None and soft is not None and 0 <= soft < 2**60:
-            headroom = max(soft - count, 0)
-
-        logger.exception(
-            "Watcher provisioning failed due to file descriptor exhaustion: "
-            f"controller={aid} active_watchers={len(self.wats)} "
-            f"fd_count={count} fd_soft_limit={soft} fd_hard_limit={hard} "
-            f"fd_headroom={headroom}"
-        )
 
     def reload(self):
         """Load all watcher records from the database and instantiate Watcher doers."""
@@ -413,7 +362,7 @@ class Watchery(doing.DoDoer):
         """
         if eid not in self.wats:
             raise ValueError(
-                f"Unable to delete watcher, {eid} is not a valid watcheridentifier"
+                f"Unable to delete watcher, {eid} is not a valid watcher identifier"
             )
 
         watcher = self.wats.pop(eid)
@@ -727,8 +676,8 @@ class CueDoer(doing.Doer):
             if cueKin in (
                 "receipt",
                 "notice",
-            ):  # cue to receipt a received event from other pre
-                cuedSerder = cue["serder"]  # Serder of received event for other pre
+            ):
+                cuedSerder = cue["serder"]
                 oid = cuedSerder.pre
                 if (
                     cid := self.hab.db.obvs.get(
@@ -764,22 +713,21 @@ class CueDoer(doing.Doer):
                         cuedSerder.said,
                     )
 
-            if cueKin in ("stream",):  # cue to receipt a received event from other pre
-                cuedSerder = cue["serder"]  # Serder of received event for other pre
+            if cueKin in ("stream",):
+                cuedSerder = cue["serder"]
                 logger.info(
                     "watcher does not support streaming said=%s", cuedSerder.said
                 )
 
-            if cueKin in ("invalid",):  # cue to receipt a received event from other pre
-                cuedSerder = cue["serder"]  # Serder of received event for other pre
+            if cueKin in ("invalid",):
+                cuedSerder = cue["serder"]
                 logger.info(
                     "invalid query route %s from said=%s",
                     cuedSerder.ked["r"],
                     cuedSerder.ked["t"],
                 )
 
-            elif cueKin in ("replay",):  # this is logs
-                # For logs, watcher needs to ensure KSNs match and if so just yield back these messages
+            elif cueKin in ("replay",):
                 pre = cue["pre"]
                 if self.hab.db.obvs.get(keys=(self.aid, self.hab.pre, pre)) is None:
                     logger.info(f"watcher not replaying unknown aid {pre}")
@@ -789,7 +737,6 @@ class CueDoer(doing.Doer):
                     self.responses.append(cue)
 
             elif cueKin in ("reply",) and route == "/ksn":
-                # This is a KSN reply, watcher needs to check key state for all witnesses and craft a full reply
                 serder = cue["serder"]
                 if (
                     self.hab.db.obvs.get(keys=(self.aid, self.hab.pre, serder.pre))
@@ -960,8 +907,6 @@ class Sentinal(doing.DoDoer):
             witQuery.dig = diffstate.dig
 
             self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
-
-            # TODO: store diffstate here!
             states.append(diffstate)
 
         # First check for any duplicity, if so get out of here
@@ -1089,21 +1034,13 @@ class WatcherCollectionEnd:
             prefixer = coring.Prefixer(qb64=aid)
         except Exception as e:
             raise falcon.HTTPBadRequest(
-                description=f"invalid AID for witnessing: {e.args[0]}"
+                description=f"invalid AID for watching: {e.args[0]}"
             )
 
         try:
             watcher = self.wty.createWatcher(cid=aid)
         except kering.ConfigurationError as e:
             raise falcon.HTTPBadRequest(description=e.args[0])
-        except Exception as e:
-            if not _isFdExhaustion(e):
-                raise
-            self.wty._logFdExhaustion(aid)
-            raise falcon.HTTPServiceUnavailable(
-                title="Watcher service unavailable",
-                description="Watcher service file descriptor capacity exhausted.",
-            ) from e
 
         if oobi:
             watcher.hby.db.oobis.pin(

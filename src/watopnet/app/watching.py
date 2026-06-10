@@ -23,7 +23,7 @@ from keri import kering
 from keri.app import configing, indirecting, habbing, agenting, querying
 from keri.app.httping import CESR_DESTINATION_HEADER
 from keri.app.oobiing import Oobiery
-from keri.core import coring, Salter, routing, eventing, parsing
+from keri.core import coring, Salter, routing, eventing, parsing, serdering
 from keri.db.basing import OobiRecord, BaserDoer
 from keri.help import helping
 from keri.peer import exchanging
@@ -92,7 +92,14 @@ def setup(
 
     cf = configing.Configer(name=db.name, headDirPath=headDirPath)
 
-    wty = Watchery(db, base=base, cf=cf, host=host, httpport=httpport)
+    wty = Watchery(
+        db,
+        base=base,
+        cf=cf,
+        headDirPath=headDirPath,
+        host=host,
+        httpport=httpport,
+    )
 
     bootApp = falcon.App(
         middleware=falcon.CORSMiddleware(
@@ -173,6 +180,7 @@ class Watchery(doing.DoDoer):
         base="",
         temp=False,
         cf=None,
+        headDirPath=None,
         scheme=kering.Schemes.http,
         qrycues=None,
         host="127.0.0.1",
@@ -185,6 +193,7 @@ class Watchery(doing.DoDoer):
             base (str): optional path prefix for KERI keystore storage
             temp (bool): if True, use temporary in-memory keystores
             cf (Configer | None): KERI configuration file reader
+            headDirPath (str | None): optional override for the keystore head directory
             scheme (str): URL scheme advertised by this watcher (http or https)
             qrycues (Deck | None): shared deck for query-reply cues
             host (str): hostname advertised in OOBI URLs
@@ -194,6 +203,7 @@ class Watchery(doing.DoDoer):
         self.db = db
         self.base = base
         self.temp = temp
+        self.headPathDir = headDirPath
         self.cf = cf
         self.scheme = scheme
         self.host = host
@@ -232,8 +242,14 @@ class Watchery(doing.DoDoer):
 
     def reload(self):
         """Load all watcher records from the database and instantiate Watcher doers."""
-        for said, wat in self.db.wats.getTopItemIter():
-            hby = habbing.Habery(name=wat.name, base=self.base, temp=self.temp)
+        for _keys, wat in self.db.wats.getTopItemIter():
+            hby = habbing.Habery(
+                name=wat.name,
+                base=self.base,
+                temp=self.temp,
+                headDirPath=self.headPathDir,
+                version=httping.DEFAULT_PROTOCOL_VERSION,
+            )
             hab = hby.habByName(wat.name)
 
             watcher = Watcher(wty=self, db=self.db, hby=hby, hab=hab, cid=wat.cid)
@@ -282,15 +298,39 @@ class Watchery(doing.DoDoer):
         name = Salter().qb64
 
         # We need to manage keys from an HSM here
-        hby = habbing.Habery(name=name, base=self.base, bran=None, temp=self.temp)
-        hab = hby.makeHab(name=name, transferable=False)
+        hby = habbing.Habery(
+            name=name,
+            base=self.base,
+            bran=None,
+            temp=self.temp,
+            headDirPath=self.headPathDir,
+            version=httping.DEFAULT_PROTOCOL_VERSION,
+        )
+        hab = hby.makeHab(
+            name=name,
+            transferable=False,
+            version=httping.DEFAULT_PROTOCOL_VERSION,
+            kind=eventing.Kinds.cesr,
+        )
         dt = helping.nowIso8601()
 
         msgs = bytearray()
         msgs.extend(
-            hab.makeEndRole(eid=hab.pre, role=kering.Roles.controller, stamp=dt)
+            hab.makeEndRole(
+                eid=hab.pre,
+                role=kering.Roles.controller,
+                stamp=dt,
+                version=httping.DEFAULT_PROTOCOL_VERSION,
+            )
         )
-        msgs.extend(hab.makeLocScheme(url=f"{self.url}/", scheme=self.scheme, stamp=dt))
+        msgs.extend(
+            hab.makeLocScheme(
+                url=self.url,
+                scheme=self.scheme,
+                stamp=dt,
+                version=httping.DEFAULT_PROTOCOL_VERSION,
+            )
+        )
         hab.psr.parse(ims=msgs)
 
         wat = basing.Wat(name=name, cid=cid, wid=hab.pre)
@@ -328,14 +368,13 @@ class Watchery(doing.DoDoer):
                 f"Unable to delete watcher, {eid} is not a valid watcheridentifier"
             )
 
-        watcher = self.wats[eid]
+        watcher = self.wats.pop(eid)
 
         cid = watcher.cid
         self.db.wats.rem(keys=(eid,))
         self.db.cids.rem(keys=(eid, cid))
-        watcher.hby.close(clear=True)
-
         self.remove([watcher])
+        watcher.hby.close(clear=True)
 
 
 class Watcher(doing.DoDoer):
@@ -398,7 +437,7 @@ class Watcher(doing.DoDoer):
             exc=self.exc,
             rvy=self.rvy,
             vry=self.verifier,
-            version=kering.Vrsn_1_0,
+            version=httping.DEFAULT_PROTOCOL_VERSION,
         )
 
         self.oobiery = Oobiery(self.hby, rvy=self.rvy)
@@ -409,6 +448,7 @@ class Watcher(doing.DoDoer):
             WatcherStart(hab=self.hab),
             MessageDoer(parser=self.psr),
             EscrowDoer(kvy=self.kvy, rvy=self.rvy, tvy=self.tvy, exc=self.exc),
+            CueDoer(db=self.db, hab=self.hab, aid=self.cid, cues=self.cues),
             SentinalDoer(
                 db=self.db, hby=self.hby, hab=self.hab, cid=self.cid, oobi=oobi
             ),
@@ -611,14 +651,15 @@ class CueDoer(doing.Doer):
     (forwards KSN replies for observed AIDs).
     """
 
-    def __init__(self, db, hab, aid, cues, responses):
+    def __init__(self, db, hab, aid, cues, responses=None):
         """
         Parameters:
             db (Baser): watopnet LMDB database
             hab (Hab): Hab for this watcher's own AID
             aid (str): qb64 AID of the controller this watcher serves
             cues (Deck): incoming cue deck produced by the KERI event processors
-            responses (Deck): outgoing response deck consumed by the transport layer
+            responses (Deck | None): optional outgoing response deck consumed by the
+                transport layer. When omitted, cues are drained but not forwarded.
         """
         self.db = db
         self.hab = hab
@@ -652,9 +693,17 @@ class CueDoer(doing.Doer):
                 ) is not None:
                     kever = self.hab.kevers[oid]
                     ksr = kever.state()
-                    rpy = eventing.reply(route=f"/ksn/{self.hab.pre}", data=asdict(ksr))
+                    rpy = eventing.reply(
+                        pre=self.hab.pre,
+                        route=f"/ksn/{self.hab.pre}",
+                        data=asdict(ksr),
+                        version=httping.DEFAULT_PROTOCOL_VERSION,
+                        pvrsn=httping.DEFAULT_PROTOCOL_VERSION,
+                        kind=eventing.Kinds.cesr,
+                    )
                     rep = dict(kin="reply", src=self.hab.pre, dest=self.aid, serder=rpy)
-                    self.responses.append(rep)
+                    if self.responses is not None:
+                        self.responses.append(rep)
 
                     logger.info(
                         f"watcher forwarding ksn for {cuedSerder.pre} at {cuedSerder.sn} to cid={cid}"
@@ -688,7 +737,8 @@ class CueDoer(doing.Doer):
                     logger.info(f"watcher not replaying unknown aid {pre}")
                     continue
 
-                self.responses.append(cue)
+                if self.responses is not None:
+                    self.responses.append(cue)
 
             elif cueKin in ("reply",) and route == "/ksn":
                 # This is a KSN reply, watcher needs to check key state for all witnesses and craft a full reply
@@ -702,7 +752,8 @@ class CueDoer(doing.Doer):
                     )
                     continue
 
-                self.responses.append(cue)
+                if self.responses is not None:
+                    self.responses.append(cue)
 
         return False
 
@@ -762,10 +813,17 @@ class Sentinal(doing.DoDoer):
             if rep.status != 200:
                 return f"Witness KSN query failed with HTTP {rep.status}"
 
+            try:
+                serder = serdering.SerderKERI(raw=bytes(rep.body))
+            except kering.KeriError:
+                return "No key state notice received from witness"
+
+            # Parse the returned KSN in the version it actually declares so the
+            # watcher can interoperate with both v1 and v2 witness replies
             self.hab.psr.parseOne(
                 ims=bytearray(rep.body),
                 local=False,
-                version=kering.Vrsn_1_0,
+                version=serder.pvrsn,
             )
 
             return None
@@ -839,7 +897,14 @@ class Sentinal(doing.DoDoer):
             mystate = kever.state()
             witstate = self.hby.db.ksns.get((saider.qb64,))
 
-            diffstate = self.diffState(wit, mystate, witstate)
+            try:
+                diffstate = self.diffState(wit, mystate, witstate)
+            except ValueError as ex:
+                # Treat an invalid witness KSN as a per-witness failure so one
+                # bad response does not abort adjudication for the rest
+                witQuery.error = f"Invalid key state notice from witness: {ex}"
+                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
+                continue
             witQuery.response_received = True
             witQuery.state = diffstate.state
             witQuery.keystate = witstate
@@ -913,9 +978,17 @@ class Sentinal(doing.DoDoer):
         """
         witstate = WitnessState()
         witstate.wit = wit
+        mypre = preksn.i
         mysn = int(preksn.s, 16)
         mydig = preksn.d
-        witstate.sn = int(witksn.f, 16)
+
+        # Compare AIDs first so sequence/digest checks only run on the same identifier
+        if witksn.i != mypre:
+            raise ValueError(
+                f"can't compare key states from different AIDs {mypre}/{witksn.i}"
+            )
+
+        witstate.sn = int(witksn.s, 16)
         witstate.dig = witksn.d
 
         # At the same sequence number, check the DIGs

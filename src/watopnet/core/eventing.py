@@ -9,10 +9,51 @@ routing each query to the appropriate watcher instance.
 """
 
 from hio.help import decking
-from keri import help
+from keri import help, kering
 from keri.core import eventing
 
 logger = help.ogler.getLogger()
+DEFAULT_REPLY_VERSION = kering.Vrsn_2_0
+
+
+def _processQueryFixedV2(*, db, cues, serder, source, sigers, cigars, reply_pre):
+    """Delegate query processing to KERI and normalize KSN replies into v2 CESR messages."""
+
+    # Create a local deck to capture cues from the Kevery
+    local_cues = decking.Deck()
+    kvy = eventing.Kevery(db=db, local=False, cues=local_cues)
+    kvy.processQuery(serder=serder, source=source, sigers=sigers, cigars=cigars)
+
+    # Iterate the cues produced for normalization
+    while local_cues:
+        cue = local_cues.pull()
+
+        # Check if the cue is a KSN reply, if not push it and continue
+        if cue.get("kin") != "reply" or cue.get("route") != "/ksn":
+            cues.push(cue)
+            continue
+
+        # Check that the reply is a v2 CESR message, if so push it and continue
+        reply = cue["serder"]
+        if (
+            reply.pvrsn == DEFAULT_REPLY_VERSION
+            and reply.kind == eventing.Kinds.cesr
+        ):
+            cues.push(cue)
+            continue
+
+        # Normalize the reply into a v2 CESR message and push it
+        updated = dict(cue)
+        updated["serder"] = eventing.reply(
+            pre=reply_pre,
+            route=reply.ked["r"],
+            data=reply.ked["a"],
+            stamp=reply.ked.get("dt"),
+            version=DEFAULT_REPLY_VERSION,
+            pvrsn=DEFAULT_REPLY_VERSION,
+            kind=eventing.Kinds.cesr,
+        )
+        cues.push(updated)
 
 
 class KeveryQueryShim:
@@ -58,14 +99,25 @@ class KeveryQueryShim:
             logger.error(f"Query received for invalid watcher={wid}")
             return
 
-        if not source.qb64 == watcher.cid:
+        if source is None:
+            logger.error("Query received without an authenticated controller source")
+            return
+
+        if source.qb64 != watcher.cid:
             logger.error(
                 f"Query received from invalid controller: {source.qb64} != {watcher.cid}"
             )
             return
 
-        kvy = eventing.Kevery(db=watcher.hab.db, local=False, cues=self.cues)
-        kvy.processQuery(serder=serder, source=source, sigers=sigers, cigars=cigars)
+        _processQueryFixedV2(
+            db=watcher.hab.db,
+            cues=self.cues,
+            serder=serder,
+            source=source,
+            sigers=sigers,
+            cigars=cigars,
+            reply_pre=watcher.hab.pre,
+        )
 
 
 class QueryKeveryShim:
@@ -93,11 +145,22 @@ class QueryKeveryShim:
             sigers (list[Siger] | None): attached controller-indexed signatures
             cigars (list[Cigar] | None): attached non-transferable signatures
         """
-        if not source.qb64 == self.watcher.cid:
+        if source is None:
+            logger.error("Query received without an authenticated controller source")
+            return
+
+        if source.qb64 != self.watcher.cid:
             logger.error(
                 f"Query received from invalid controller: {source.qb64} != {self.watcher.cid}"
             )
             return
 
-        kvy = eventing.Kevery(db=self.watcher.hab.db, local=False, cues=self.cues)
-        kvy.processQuery(serder=serder, source=source, sigers=sigers, cigars=cigars)
+        _processQueryFixedV2(
+            db=self.watcher.hab.db,
+            cues=self.cues,
+            serder=serder,
+            source=source,
+            sigers=sigers,
+            cigars=cigars,
+            reply_pre=self.watcher.hab.pre,
+        )

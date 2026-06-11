@@ -12,9 +12,9 @@ from hio.base import doing
 from hio.help import decking
 from keri import help
 from keri import kering
-from keri.core import parsing
+from keri.core import parsing, serdering
 
-from watopnet.core import eventing
+from watopnet.core import eventing, httping as wat_httping
 
 logger = help.ogler.getLogger()
 
@@ -125,7 +125,7 @@ class Reactant(doing.DoDoer):
             ims=self.remoter.rxbs,
             kvy=self.kvy,
             framed=True,
-            version=kering.Vrsn_1_0,
+            version=wat_httping.DEFAULT_PROTOCOL_VERSION,
         )
 
         super(Reactant, self).__init__(doers=doers, **kwa)
@@ -152,8 +152,25 @@ class Reactant(doing.DoDoer):
         self.tock = tock
         yield self.tock
 
-        done = yield from self.parser.parsator(local=True)
-        return done
+        while True:
+            while self.remoter.rxbs:
+                try:
+                    # Use the KERI serder for version sniffing
+                    serder = serdering.SerderKERI(raw=bytes(self.remoter.rxbs))
+                except kering.ShortageError:
+                    break
+                except kering.KeriError as ex:
+                    logger.error("reactant dropping invalid message prefix: %s", ex)
+                    del self.remoter.rxbs[:]
+                    break
+
+                self.parser.parseOne(
+                    ims=self.remoter.rxbs,
+                    local=True,
+                    version=serder.pvrsn,
+                )
+
+            yield self.tock
 
     def cueDo(self, tymth=None, tock=0.0, **kwa):
         """Generator that drains the cue deck and sends signed replies back to the client.
@@ -183,6 +200,13 @@ class Reactant(doing.DoDoer):
                     serder = cue["serder"]
                     wid = cue["src"]
                     watcher = self.wty.lookup(wid)
+                    if watcher is None:
+                        logger.info(
+                            "reactant dropping stale reply cue for unknown watcher %s",
+                            wid,
+                        )
+                        yield
+                        continue
 
                     msg = watcher.hab.endorse(serder=serder)
                     self.sendMessage(msg)

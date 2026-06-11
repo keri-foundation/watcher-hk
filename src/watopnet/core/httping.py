@@ -13,12 +13,14 @@ import falcon
 from keri.app import httping
 from keri.app.httping import CESR_DESTINATION_HEADER
 from keri import kering
-from keri.core import eventing, coring, parsing
+from keri.core import eventing, parsing, serdering
 from keri.help import helping
 from keri.kering import Ilks
 
 from watopnet.core import basing
 from watopnet.core.eventing import QueryKeveryShim
+
+DEFAULT_PROTOCOL_VERSION = kering.Vrsn_2_0
 
 
 class HttpEnd:
@@ -30,14 +32,12 @@ class HttpEnd:
     inline via ``QueryKeveryShim``.
     """
 
-    def __init__(self, wty, rxbs=None):
+    def __init__(self, wty):
         """
         Parameters:
             wty (Watchery): registry of active watcher instances
-            rxbs (bytearray | None): optional shared inbound byte buffer
         """
         self.wty = wty
-        self.rxbs = rxbs if rxbs is not None else bytearray()
 
     def on_post(self, req, rep):
         """Accept a KERI event with CESR attachment headers and route it to the target watcher.
@@ -85,62 +85,93 @@ class HttpEnd:
         rep.set_header("connection", "close")
 
         cr = httping.parseCesrHttpRequest(req=req)
-        sadder = coring.Sadder(ked=cr.payload, kind=eventing.Kinds.json)
-        msg = bytearray(sadder.raw)
-        msg.extend(cr.attachments.encode("utf-8"))
+        try:
+            version_info = kering.deversify(cr.payload["v"])
+        except (KeyError, TypeError) as ex:
+            raise falcon.HTTPBadRequest(
+                description="invalid KERI payload: missing version string"
+            ) from ex
+        except kering.KeriError as ex:
+            raise falcon.HTTPBadRequest(
+                description=f"invalid KERI payload: {ex}"
+            ) from ex
 
-        if sadder.proto in ("ACDC",):
+        # Reject non-KERI payloads before building a KERI serder so unsupported
+        # protocols like ACDC do not surface as internal validation errors
+        if version_info.proto != kering.Protocols.keri:
             rep.set_header("Content-Type", "application/json")
             rep.status = falcon.HTTP_UNPROCESSABLE_ENTITY
-        else:
-            ilk = sadder.ked["t"]
-            if ilk in (
-                Ilks.icp,
-                Ilks.rot,
-                Ilks.ixn,
-                Ilks.dip,
-                Ilks.drt,
-                Ilks.exn,
-                Ilks.rpy,
-            ):
-                watcher.psr.parseOne(ims=msg, local=True)
+            return
 
+        try:
+            serder = serdering.SerderKERI(sad=cr.payload, kind=eventing.Kinds.json)
+        except kering.KeriError as ex:
+            raise falcon.HTTPBadRequest(
+                description=f"invalid KERI payload: {ex}"
+            ) from ex
+        msg = bytearray(serder.raw)
+        msg.extend(cr.attachments.encode("utf-8"))
+        pvrsn = version_info.pvrsn
+        ilk = serder.ked["t"]
+        if ilk in (
+            Ilks.icp,
+            Ilks.rot,
+            Ilks.ixn,
+            Ilks.dip,
+            Ilks.drt,
+            Ilks.exn,
+            Ilks.rpy,
+        ):
+            try:
+                watcher.psr.parseOne(ims=msg, local=True, version=pvrsn)
+            except kering.KeriError as ex:
+                raise falcon.HTTPBadRequest(
+                    description=f"invalid KERI message: {ex}"
+                ) from ex
+
+            rep.set_header("Content-Type", "application/json")
+            rep.status = falcon.HTTP_204
+
+        elif ilk in (Ilks.vcp, Ilks.vrt, Ilks.iss, Ilks.rev, Ilks.bis, Ilks.brv):
+            rep.set_header("Content-Type", "application/json")
+            rep.status = falcon.HTTP_UNPROCESSABLE_ENTITY
+
+        elif ilk in (Ilks.qry,):
+            kvy = QueryKeveryShim(watcher=watcher)
+            try:
+                parsing.Parser(kvy=kvy, version=pvrsn).parseOne(ims=msg, local=False)
+            except kering.KeriError as ex:
+                raise falcon.HTTPBadRequest(
+                    description=f"invalid KERI query: {ex}"
+                ) from ex
+
+            if not kvy.cues:
                 rep.set_header("Content-Type", "application/json")
                 rep.status = falcon.HTTP_204
-            elif ilk in (Ilks.vcp, Ilks.vrt, Ilks.iss, Ilks.rev, Ilks.bis, Ilks.brv):
-                rep.set_header("Content-Type", "application/json")
-                rep.status = falcon.HTTP_UNPROCESSABLE_ENTITY
+                return
 
-            elif ilk in (Ilks.qry,):
-                kvy = QueryKeveryShim(watcher=watcher)
-                parsing.Parser(kvy=kvy, version=kering.Vrsn_1_0).parseOne(
-                    ims=msg, local=False
-                )
+            for cue in kvy.cues:
+                cueKin = cue["kin"]
 
-                if not kvy.cues:
-                    rep.set_header("Content-Type", "application/json")
-                    rep.status = falcon.HTTP_204
-                    return
+                if cueKin in ("replay",):
+                    msgs = cue["msgs"]
+                    data = bytearray()
+                    for msg in msgs:
+                        data.extend(msg)
 
-                for cue in kvy.cues:
-                    cueKin = cue["kin"]
+                    rep.set_header("Content-Type", "application/json+cesr")
+                    rep.status = falcon.HTTP_200
+                    rep.data = bytes(data)
 
-                    if cueKin in ("replay",):
-                        msgs = cue["msgs"]
-                        data = bytearray()
-                        for msg in msgs:
-                            data.extend(msg)
-
-                        rep.set_header("Content-Type", "application/json+cesr")
-                        rep.status = falcon.HTTP_200
-                        rep.data = bytes(data)
-
-                    elif cueKin in ("reply",):
-                        serder = cue["serder"]
-                        msg = watcher.hab.endorse(serder=serder)
-                        rep.set_header("Content-Type", "application/json+cesr")
-                        rep.status = falcon.HTTP_200
-                        rep.data = msg
+                elif cueKin in ("reply",):
+                    serder = cue["serder"]
+                    msg = watcher.hab.endorse(serder=serder)
+                    rep.set_header("Content-Type", "application/json+cesr")
+                    rep.status = falcon.HTTP_200
+                    rep.data = msg
+        else:
+            rep.set_header("Content-Type", "application/json")
+            rep.status = falcon.HTTP_UNPROCESSABLE_ENTITY
 
     def on_put(self, req, rep):
         """Accept raw CESR bytes and push them into the target watcher's inbound stream.
@@ -182,32 +213,25 @@ class HttpEnd:
         if watcher is None:
             raise falcon.HTTPNotFound(title=f"unknown destination AID {aid}")
 
-        watcher.psr.parse(ims=req.bounded_stream.read(), local=True)
+        ims = bytearray(req.bounded_stream.read())
+        try:
+            serder = serdering.SerderKERI(raw=bytes(ims))
+        except kering.ShortageError as ex:
+            raise falcon.HTTPBadRequest(description="incomplete CESR payload") from ex
+        except kering.KeriError as ex:
+            raise falcon.HTTPBadRequest(
+                description=f"invalid CESR payload: {ex}"
+            ) from ex
+
+        try:
+            watcher.psr.parse(ims=ims, local=True, version=serder.pvrsn)
+        except kering.KeriError as ex:
+            raise falcon.HTTPBadRequest(
+                description=f"invalid KERI stream: {ex}"
+            ) from ex
 
         rep.set_header("Content-Type", "application/json")
         rep.status = falcon.HTTP_204
-
-
-def getRequiredParam(body, name):
-    """Extract a required field from a parsed request body dict.
-
-    Parameters:
-        body (dict): parsed JSON request body
-        name (str): field name to extract
-
-    Returns:
-        object: the field value
-
-    Raises:
-        falcon.HTTPBadRequest: if the field is absent or None
-    """
-    param = body.get(name)
-    if param is None:
-        raise falcon.HTTPBadRequest(
-            description=f"required field '{name}' missing from request"
-        )
-
-    return param
 
 
 class Throttle(object):

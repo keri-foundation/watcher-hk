@@ -9,6 +9,7 @@ OOBI (Out-of-Band Introduction) endpoint for the watcher server.
 
 import falcon
 from keri import kering
+from keri.core import eventing
 from keri.end import ending
 
 
@@ -29,11 +30,11 @@ class OOBIEnd:
         self.wty = wty
         self.default = default
 
-    def on_get(self, req, rep, aid=None, role=None, eid=None):
+    def on_get(self, _, rep, aid=None, role=None, eid=None):
         """Return the OOBI reply for the requested AID, role, and optional participant EID.
 
         Parameters:
-            req (Request): Falcon HTTP request object
+            _ (Request): Falcon HTTP request object
             rep (Response): Falcon HTTP response object
             aid (str | None): qb64 AID whose OOBI is requested; falls back to ``default``
             role (str | None): requested role for the OOBI reply message
@@ -70,9 +71,19 @@ class OOBIEnd:
         if eid:
             eids.append(eid)
 
-        msgs = hab.replyToOobi(aid=aid, role=role, eids=eids)
+        replying = dict(
+            version=kering.Vrsn_1_0,
+            pvrsn=kering.Vrsn_1_0,
+            kind=eventing.Kinds.json,
+        )
+        msgs = hab.replyToOobi(aid=aid, role=role, eids=eids, **replying)
         if not msgs and role is None:
-            msgs = hab.replyToOobi(aid=aid, role=kering.Roles.witness, eids=eids)
+            msgs = hab.replyToOobi(
+                aid=aid,
+                role=kering.Roles.witness,
+                eids=eids,
+                **replying,
+            )
             msgs.extend(hab.replay(aid))
 
         if msgs:

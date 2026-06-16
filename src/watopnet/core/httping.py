@@ -214,21 +214,24 @@ class HttpEnd:
             raise falcon.HTTPNotFound(title=f"unknown destination AID {aid}")
 
         ims = bytearray(req.bounded_stream.read())
-        try:
-            serder = serdering.SerderKERI(raw=bytes(ims))
-        except kering.ShortageError as ex:
-            raise falcon.HTTPBadRequest(description="incomplete CESR payload") from ex
-        except kering.KeriError as ex:
-            raise falcon.HTTPBadRequest(
-                description=f"invalid CESR payload: {ex}"
-            ) from ex
+        while ims:
+            try:
+                serder = serdering.SerderKERI(raw=bytes(ims))
+            except kering.ShortageError as ex:
+                raise falcon.HTTPBadRequest(
+                    description="incomplete CESR payload"
+                ) from ex
+            except kering.KeriError as ex:
+                raise falcon.HTTPBadRequest(
+                    description=f"invalid CESR payload: {ex}"
+                ) from ex
 
-        try:
-            watcher.psr.parse(ims=ims, local=True, version=serder.pvrsn)
-        except kering.KeriError as ex:
-            raise falcon.HTTPBadRequest(
-                description=f"invalid KERI stream: {ex}"
-            ) from ex
+            try:
+                watcher.psr.parseOne(ims=ims, local=True, version=serder.pvrsn)
+            except kering.KeriError as ex:
+                raise falcon.HTTPBadRequest(
+                    description=f"invalid KERI stream: {ex}"
+                ) from ex
 
         rep.set_header("Content-Type", "application/json")
         rep.status = falcon.HTTP_204
@@ -259,8 +262,9 @@ class Throttle(object):
             req (Request): Falcon HTTP request object
             resp (Response): Falcon HTTP response object
         """
-        client = req.access_route[0]
-        ip = client[0]
+        ip = req.remote_addr
+        if not ip:
+            ip = req.access_route[-1] if req.access_route else "unknown"
         now = helping.nowUTC()
 
         reqs = self.db.ips.get(keys=(ip,))
@@ -277,4 +281,4 @@ class Throttle(object):
             else:
                 reqs = basing.Requests(helping.toIso8601(now), 1)
 
-        self.db.ips.pin(ip, reqs)
+        self.db.ips.pin(keys=(ip,), val=reqs)

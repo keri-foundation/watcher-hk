@@ -1,5 +1,6 @@
 # -*- encoding: utf-8 -*-
 
+import datetime
 import importlib
 import json
 from types import SimpleNamespace
@@ -352,8 +353,13 @@ def test_http_post_maps_query_parser_errors_to_bad_request(monkeypatch):
 
 
 def test_http_put_rejects_invalid_raw_cesr_with_bad_request():
-    watcher = SimpleNamespace(psr=SimpleNamespace(parse=lambda **kwa: None))
+    """Return a client error when raw PUT bytes are not a valid KERI message prefix."""
+
+    # Use a fake parser
+    watcher = SimpleNamespace(psr=SimpleNamespace(parseOne=lambda **kwa: None))
     wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
+
+    # Feed an invalid raw payload 
     req = SimpleNamespace(
         method="PUT",
         headers={CESR_DESTINATION_HEADER: WATCHER_AID},
@@ -361,19 +367,70 @@ def test_http_put_rejects_invalid_raw_cesr_with_bad_request():
     )
     rep = Response()
 
+    # Assert that the request gets rejected
     with pytest.raises(falcon.HTTPBadRequest) as exc:
         wat_httping.HttpEnd(wty=wty).on_put(req, rep)
 
+    # The error text should identify the raw CESR payload as invalid
     assert "invalid CESR payload" in exc.value.description
 
 
+def test_http_put_parses_mixed_version_stream_one_message_at_a_time(monkeypatch):
+    """Test that each raw PUT message is parsed using the version declared by that message."""
+    # Capture the versions passed into parseOne() for each message in the stream
+    versions = []
+
+    # Simulate a stream whose first byte identifies which protocol version to use
+    def fake_serder(*, raw):
+        return SimpleNamespace(
+            pvrsn=(
+                kering.Vrsn_1_0 if raw.startswith(b"1") else kering.Vrsn_2_0
+            )
+        )
+
+    # Each parse consumes one byte so the outer loop advances to the next message
+    def parse_one(**kwa):
+        versions.append(kwa["version"])
+        del kwa["ims"][:1]
+
+    monkeypatch.setattr(wat_httping.serdering, "SerderKERI", fake_serder)
+
+    # Inject the fake parser 
+    watcher = SimpleNamespace(psr=SimpleNamespace(parseOne=parse_one))
+    wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
+
+    # The body contains two synthetic messages: one v1 marker and one v2 marker
+    req = SimpleNamespace(
+        method="PUT",
+        headers={CESR_DESTINATION_HEADER: WATCHER_AID},
+        bounded_stream=SimpleNamespace(read=lambda: b"12"),
+        remote_addr="127.0.0.1",
+        access_route=["127.0.0.1"],
+    )
+    rep = Response()
+
+    # Run the handler so it drains both messages from the raw stream
+    wat_httping.HttpEnd(wty=wty).on_put(req, rep)
+
+    # Each message should be parsed with its own declared version
+    assert versions == [kering.Vrsn_1_0, kering.Vrsn_2_0]
+    
+    # Assert successfull processing
+    assert rep.status == falcon.HTTP_204
+
+
 def test_http_put_maps_parser_errors_to_bad_request():
+    """Map parser-level raw PUT failures to a deliberate client error."""
+
+    # Set up a valid serder
     serder = eventing.reply(route="/watcher/add", data={})
 
-    def fail_parse(**kwa):
+    # Simulate a deeper parser failure after ingress validation succeeds
+    def fail_parse_one(**kwa):
         raise kering.ValidationError("bad stream")
 
-    watcher = SimpleNamespace(psr=SimpleNamespace(parse=fail_parse))
+    # Use the failing parser stub behind a normal watcher lookup.
+    watcher = SimpleNamespace(psr=SimpleNamespace(parseOne=fail_parse_one))
     wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
     req = SimpleNamespace(
         method="PUT",
@@ -382,10 +439,87 @@ def test_http_put_maps_parser_errors_to_bad_request():
     )
     rep = Response()
 
+    # The HTTP layer should translate parser exceptions into a client error
     with pytest.raises(falcon.HTTPBadRequest) as exc:
         wat_httping.HttpEnd(wty=wty).on_put(req, rep)
 
+    # Assert clear error message that indicate the stream failed KERI parsing
     assert "invalid KERI stream" in exc.value.description
+
+
+def test_throttle_uses_remote_addr_instead_of_forwarded_route():
+    """Test that rate-limit is done by the connected peer address instead of forwarded client hints."""
+    
+    # Set up a fake DB
+    db = basing.Baser(name="keri-v2-throttle-compat", temp=True)
+    try:
+        throttle = wat_httping.Throttle(db=db)
+
+        # Present conflicting values so the test can distinguish trusted from untrusted sources
+        req = SimpleNamespace(
+            remote_addr="127.0.0.1",
+            access_route=["203.0.113.10", "127.0.0.1"],
+        )
+        rep = SimpleNamespace(complete=False, status=None)
+
+        # Two requests from the same connected peer should hit the same bucket
+        throttle.process_request(req, rep)
+        throttle.process_request(req, rep)
+
+        # The trusted peer address should be the only bucket that increments
+        assert db.ips.get(keys=("127.0.0.1",)).count == 2
+
+        # A spoofable forwarded address must not create its own throttle bucket
+        assert db.ips.get(keys=("203.0.113.10",)) is None
+
+        # The limit is not reached
+        assert rep.complete is False
+    finally:
+        db.close(clear=True)
+
+
+def test_throttle_resets_count_after_window_rollover(monkeypatch):
+    """Test reset the stored request count once a client falls outside the throttle window."""
+
+    # Set up fake DB
+    db = basing.Baser(name="keri-v2-throttle-rollover", temp=True)
+    try:
+        throttle = wat_httping.Throttle(db=db)
+
+        # Set up IP 
+        req = SimpleNamespace(
+            remote_addr="127.0.0.1",
+            access_route=["127.0.0.1"],
+        )
+        rep = SimpleNamespace(complete=False, status=None)
+
+        # Drive time manually so we can cover both "inside window" and "after rollover"
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        times = iter(
+            [
+                start,
+                start + datetime.timedelta(seconds=1),
+                start + wat_httping.Throttle.Window + datetime.timedelta(seconds=1),
+            ]
+        )
+        monkeypatch.setattr(wat_httping.helping, "nowUTC", lambda: next(times))
+
+        # First request initializes the per-IP counter
+        throttle.process_request(req, rep)
+        assert db.ips.get(keys=("127.0.0.1",)).count == 1
+
+        # Second request lands inside the same window and increments the count
+        throttle.process_request(req, rep)
+        assert db.ips.get(keys=("127.0.0.1",)).count == 2
+
+        # Third request lands after the window and should reset the stored count
+        throttle.process_request(req, rep)
+        assert db.ips.get(keys=("127.0.0.1",)).count == 1
+
+        # A rollover should not trigger rate-limit rejection
+        assert rep.complete is False
+    finally:
+        db.close(clear=True)
 
 
 def test_query_replies_are_normalized_to_fixed_v2_cesr(monkeypatch):

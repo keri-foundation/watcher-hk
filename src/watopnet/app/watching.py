@@ -1074,12 +1074,33 @@ class WatcherCollectionEnd:
             rep (Response): Falcon HTTP response object
         """
         body = req.get_media()
+        if not isinstance(body, dict):
+            raise falcon.HTTPBadRequest(
+                description="request body must be a JSON object"
+            )
+
         aid = body.get("aid")
         if aid is None:
             raise falcon.HTTPBadRequest(
                 description="required field 'aid' missing from request"
             )
+        if not isinstance(aid, str):
+            raise falcon.HTTPBadRequest(description="field 'aid' must be a string")
+
         oobi = body.get("oobi")
+        if oobi is not None:
+            if not isinstance(oobi, str):
+                raise falcon.HTTPBadRequest(description="field 'oobi' must be a string")
+
+            splits = urlsplit(oobi)
+            if splits.scheme not in (kering.Schemes.http, kering.Schemes.https):
+                raise falcon.HTTPBadRequest(
+                    description="field 'oobi' must be an http or https URL"
+                )
+            if not splits.netloc:
+                raise falcon.HTTPBadRequest(
+                    description="field 'oobi' must include a network location"
+                )
 
         try:
             prefixer = coring.Prefixer(qb64=aid)

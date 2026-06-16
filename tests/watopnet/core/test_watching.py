@@ -26,11 +26,13 @@ CONTROLLER_AID = "ENsqL5zLYNbZf0kcOlx-ioqNWlatD9rKZZM4hbEI7nza"
 
 
 def test_watcher_fd_exhaustion_detection_handles_oserror_and_lmdb_text():
+    """Recognize both OS-level and wrapped LMDB-style FD exhaustion errors."""
     assert watching._isFdExhaustion(OSError(errno.EMFILE, "Too many open files"))
     assert watching._isFdExhaustion(RuntimeError("lmdb failure: Too many open files"))
 
 
 def test_create_watcher_fd_exhaustion_returns_service_unavailable():
+    """Map watcher provisioning FD exhaustion failures to a 503 boot API response."""
     wty = MagicMock()
     wty.createWatcher.side_effect = RuntimeError("lmdb failure: Too many open files")
 
@@ -44,6 +46,53 @@ def test_create_watcher_fd_exhaustion_returns_service_unavailable():
     assert response.status == falcon.HTTP_503
     assert response.json["title"] == "Watcher service unavailable"
     wty._logFdExhaustion.assert_called_once_with(CONTROLLER_AID)
+
+
+def test_create_watcher_rejects_non_object_json_body():
+    """Reject boot requests whose JSON body is not an object before provisioning."""
+
+    wty = MagicMock()
+
+    # Build the real route so Falcon handles request decoding for us
+    endpoint = watching.WatcherCollectionEnd(wty=wty)
+    app = falcon.App()
+    app.add_route("/watchers", endpoint)
+    client = testing.TestClient(app)
+
+    # Arrays are valid JSON, but not valid request bodies for this endpoint
+    response = client.simulate_post("/watchers", json=[])
+
+    # The contract is "JSON object required", assert 400 error and message
+    assert response.status == falcon.HTTP_400
+    assert response.json["description"] == "request body must be a JSON object"
+
+    # Assert provisioning was not called
+    wty.createWatcher.assert_not_called()
+
+
+def test_create_watcher_rejects_invalid_oobi_url():
+    """Reject boot requests that provide an OOBI URL outside the allowed schemes."""
+
+    wty = MagicMock()
+
+    # Use the real endpoint so the request path matches production behavior
+    endpoint = watching.WatcherCollectionEnd(wty=wty)
+    app = falcon.App()
+    app.add_route("/watchers", endpoint)
+    client = testing.TestClient(app)
+
+    # Send an invalid oobi URL
+    response = client.simulate_post(
+        "/watchers",
+        json={"aid": CONTROLLER_AID, "oobi": "ftp://example.com/oobi"},
+    )
+
+    # Invalid OOBIs should be rejected as client errors, not queued for resolution
+    assert response.status == falcon.HTTP_400
+    assert response.json["description"] == "field 'oobi' must be an http or https URL"
+
+    # Provisioning must stop before any watcher is created
+    wty.createWatcher.assert_not_called()
 
 
 def test_adding_watched(mockHelpingNowUTC):

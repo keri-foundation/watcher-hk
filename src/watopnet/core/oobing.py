@@ -11,6 +11,7 @@ import falcon
 from keri import kering
 from keri.core import eventing
 from keri.end import ending
+from watopnet.core.eventing import DEFAULT_REPLY_VERSION
 
 
 class OOBIEnd:
@@ -72,9 +73,9 @@ class OOBIEnd:
             eids.append(eid)
 
         replying = dict(
-            version=kering.Vrsn_1_0,
-            pvrsn=kering.Vrsn_1_0,
-            kind=eventing.Kinds.json,
+            version=DEFAULT_REPLY_VERSION,
+            pvrsn=DEFAULT_REPLY_VERSION,
+            kind=eventing.Kinds.cesr,
         )
         msgs = hab.replyToOobi(aid=aid, role=role, eids=eids, **replying)
         if not msgs and role is None:

@@ -826,6 +826,130 @@ def test_sentinal_pins_invalid_witness_ksn_without_aborting_other_witnesses(
     assert second_query.dig == "DIG_WIT_2"
 
 
+def test_sentinal_watch_flow_covers_early_exit_ahead_and_duplicitous(monkeypatch):
+    """Exercise the main watch() control-flow branches in one compact scenario test"""
+
+    # Unknown observed AIDs should exit immediately without trying to poll anything
+    unknown = Sentinal(
+        hby=SimpleNamespace(kevers={}),
+        hab=SimpleNamespace(pre="WATCHER_AID"),
+        oid="UNKNOWN_AID",
+        cid="CONTROLLER_AID",
+        oobi="http://watcher.example/oobi",
+        db=SimpleNamespace(witq=SimpleNamespace(pin=lambda **kwa: None)),
+    )
+    monkeypatch.setattr(unknown, "extend", lambda doers: None)
+    monkeypatch.setattr(unknown, "remove", lambda doers: None)
+
+    do = unknown.watch(lambda: 0.0, tock=0.0)
+    assert next(do) == 0.0
+    with pytest.raises(StopIteration) as stop:
+        next(do)
+    assert stop.value.value is True
+
+    # Build one real-ish sentinel harness for the ahead/duplicitous outcome branches
+    class FakeStore:
+        def __init__(self):
+            self.values = {}
+
+        def get(self, keys):
+            return self.values.get(keys)
+
+        def rem(self, keys):
+            self.values.pop(keys, None)
+
+        def put(self, keys, val):
+            self.values[keys] = val
+
+    class FakeWitnessQueryStore:
+        def __init__(self):
+            self.calls = []
+
+        def pin(self, *, keys, val):
+            self.calls.append((keys, val))
+
+    class FakeKever:
+        wits = ["WIT_1", "WIT_2"]
+        sn = 3
+
+        @staticmethod
+        def state():
+            return SimpleNamespace(i="OBSERVED_AID", s="3", d="DIG_3")
+
+    knas = FakeStore()
+    ksns = FakeStore()
+    witq = FakeWitnessQueryStore()
+    db = SimpleNamespace(knas=knas, ksns=ksns, witq=witq)
+
+    def fake_query(self, *, wit, pre, tymth):
+        knas.put((pre, wit), SimpleNamespace(qb64=wit))
+        ksns.put((wit,), SimpleNamespace(i=pre, s="4", d=f"DIG_{wit}"))
+        if False:
+            yield self.tock
+        return None
+
+    monkeypatch.setattr(Sentinal, "queryWitnessState", fake_query)
+
+    sentinal = Sentinal(
+        hby=SimpleNamespace(db=db, kevers={"OBSERVED_AID": FakeKever()}),
+        hab=SimpleNamespace(pre="WATCHER_AID", db=db, kever=FakeKever()),
+        oid="OBSERVED_AID",
+        cid="CONTROLLER_AID",
+        oobi="http://watcher.example/oobi",
+        db=SimpleNamespace(witq=witq),
+    )
+    launched = []
+    monkeypatch.setattr(sentinal, "remove", lambda doers: None)
+    monkeypatch.setattr(sentinal, "extend", lambda doers: launched.extend(doers))
+
+    # Ahead witnesses that agree should launch a SeqNoQuerier follow-up
+    monkeypatch.setattr(
+        Sentinal,
+        "diffState",
+        staticmethod(
+            lambda wit, preksn, witksn: SimpleNamespace(
+                wit=wit,
+                state=States.ahead,
+                sn=4,
+                dig="DIG_AHEAD",
+            )
+        ),
+    )
+
+    do = sentinal.watch(lambda: 0.0, tock=0.0)
+    assert next(do) == 0.0
+    with pytest.raises(StopIteration) as stop:
+        next(do)
+    assert stop.value.value is None
+    assert len(launched) == 1
+    assert isinstance(launched[0], watching.querying.SeqNoQuerier)
+
+    # Reset the harness and verify duplicitous witness results terminate the pass
+    launched.clear()
+    knas.values.clear()
+    ksns.values.clear()
+    witq.calls.clear()
+    monkeypatch.setattr(
+        Sentinal,
+        "diffState",
+        staticmethod(
+            lambda wit, preksn, witksn: SimpleNamespace(
+                wit=wit,
+                state=States.duplicitous,
+                sn=4,
+                dig=f"DIG_{wit}",
+            )
+        ),
+    )
+
+    do = sentinal.watch(lambda: 0.0, tock=0.0)
+    assert next(do) == 0.0
+    with pytest.raises(StopIteration) as stop:
+        next(do)
+    assert stop.value.value is True
+    assert launched == []
+
+
 def test_diff_state_uses_ksn_sequence_and_validates_aid():
     ours = Sentinal.diffState(
         "WIT_1",

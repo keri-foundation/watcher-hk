@@ -13,7 +13,7 @@ import json
 import os
 import random
 from collections import namedtuple
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from urllib.parse import urlsplit
 
 import falcon
@@ -72,6 +72,15 @@ class WitnessState:
     state: Stateage
     sn: int
     dig: str
+
+
+@dataclass
+class WitnessCollection:
+    """Collected state and metadata for one witness polling attempt"""
+
+    witQuery: basing.WitnessQuery
+    witstate: object | None
+    error: str | None = None
 
 
 def setup(
@@ -872,8 +881,8 @@ class Sentinal(doing.DoDoer):
         finally:
             self.remove([clientDoer])
 
-    def watch(self, tymth, tock=0.0, **kwa):
-        """Poll each witness of the observed AID and record the key-state comparison result.
+    def _beginWatchPass(self, tymth, tock):
+        """Initialize the polling pass and return the observed AID's local kever
 
         Parameters:
             tymth: injected tymist wrapper
@@ -889,78 +898,113 @@ class Sentinal(doing.DoDoer):
         )
         if self.oid not in self.hby.kevers:
             logger.info(f"Unable to watch unknown aid={self.oid}")
-            return True  # We are done, time to exit
+            return None
 
+        # Pull the verifier for the observed AID
         kever = self.hby.kevers[self.oid]
         if len(kever.wits) == 0:
+            # AID has no witnesses
             logger.info(f"No witnesses for {self.oid} at {kever.sn}, skipping.")
-            return True
+            return None
 
-        states = []
-        queryTimestamp = helping.nowIso8601()
+        return kever
 
-        for wit in kever.wits:
-            keys = (self.oid, wit)
-            witQuery = basing.WitnessQuery(
-                watcher_id=self.hab.pre,
-                aid=self.oid,
+    def _collectWitnessState(self, wit, queryTimestamp):
+        """Collect fresh witness state for one witness, or return a normalized error."""
+
+        # Set up the witness query record
+        witQuery = basing.WitnessQuery(
+            watcher_id=self.hab.pre,
+            aid=self.oid,
+            wit=wit,
+            query_timestamp=queryTimestamp,
+            response_received=False,
+            state=States.unresponsive,  # Set as unresponsive until we get a response
+        )
+
+        # Remove any previously cached KSN
+        keys = (self.oid, wit)
+        saider = self.hab.db.knas.get(keys)
+        if saider is not None:
+            self.hab.db.knas.rem(keys)
+            self.hab.db.ksns.rem((saider.qb64,))
+
+        # Poll the witness and normalize endpoint/config failures 
+        try:
+            error = yield from self.queryWitnessState(
                 wit=wit,
-                query_timestamp=queryTimestamp,
-                response_received=False,
-                state=States.unresponsive,
+                pre=self.oid,
+                tymth=self.tymth,
+            )
+        except (kering.ConfigurationError, kering.MissingEntryError) as ex:
+            error = f"Missing witness endpoint: {ex}"
+
+        if error:
+            return WitnessCollection(witQuery=witQuery, witstate=None, error=error)
+
+        # After polling, the parser should have stored a KSN pointer
+        saider = self.hab.db.knas.get((self.oid, wit))
+        if saider is None:
+            return WitnessCollection(
+                witQuery=witQuery,
+                witstate=None,
+                error="No key state notice received from witness",
             )
 
-            # Check for Key State from this Witness and remove if exists
-            saider = self.hab.db.knas.get(keys)
-            if saider is not None:
-                self.hab.db.knas.rem(keys)
-                self.hab.db.ksns.rem((saider.qb64,))
+        # Resolve the pointer to the actual cached key-state notice body
+        witstate = self.hby.db.ksns.get((saider.qb64,))
+        return WitnessCollection(witQuery=witQuery, witstate=witstate)
 
-            try:
-                error = yield from self.queryWitnessState(
-                    wit=wit,
-                    pre=self.oid,
-                    tymth=self.tymth,
-                )
-            except (kering.ConfigurationError, kering.MissingEntryError) as ex:
-                error = f"Missing witness endpoint: {ex}"
+    def _recordWitnessOutcome(self, wit, collection, kever):
+        """Persist one witness result, whether it failed, was invalid, or succeeded"""
 
-            if error:
-                witQuery.error = error
-                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
-                continue
+        if collection.error is not None:
+            # Persist polling and missing-KSN failures
+            collection.witQuery.error = collection.error
+            self.db.witq.pin(
+                keys=(self.hab.pre, self.oid, wit),
+                val=collection.witQuery,
+            )
+            return None
 
-            saider = self.hab.db.knas.get(keys)
-            if saider is None:
-                witQuery.error = "No key state notice received from witness"
-                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
-                continue
+        try:
+            # Compare local state and witness state
+            diffstate = self.diffState(wit, kever.state(), collection.witstate)
+        except ValueError as ex:
+            # Invalid witness KSNs are recorded as per-witness failures
+            collection.witQuery.error = f"Invalid key state notice from witness: {ex}"
+            self.db.witq.pin(
+                keys=(self.hab.pre, self.oid, wit),
+                val=collection.witQuery,
+            )
+            return None
 
-            mystate = kever.state()
-            witstate = self.hby.db.ksns.get((saider.qb64,))
+        # Mark witness response as received 
+        collection.witQuery.response_received = True
+        collection.witQuery.state = diffstate.state
+        collection.witQuery.keystate = collection.witstate
+        collection.witQuery.sn = diffstate.sn
+        collection.witQuery.dig = diffstate.dig
 
-            try:
-                diffstate = self.diffState(wit, mystate, witstate)
-            except ValueError as ex:
-                # Treat an invalid witness KSN as a per-witness failure so one
-                # bad response does not abort adjudication for the rest
-                witQuery.error = f"Invalid key state notice from witness: {ex}"
-                self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
-                continue
-            witQuery.response_received = True
-            witQuery.state = diffstate.state
-            witQuery.keystate = witstate
-            witQuery.sn = diffstate.sn
-            witQuery.dig = diffstate.dig
+        # Persist the successful witness result 
+        self.db.witq.pin(
+            keys=(self.hab.pre, self.oid, wit),
+            val=collection.witQuery,
+        )
 
-            self.db.witq.pin(keys=(self.hab.pre, self.oid, wit), val=witQuery)
-            states.append(diffstate)
+        return diffstate
 
-        # First check for any duplicity, if so get out of here
+    def _resolveWitnessStates(self, kever, states):
+        """Resolve the overall outcome after all witness states are collected."""
+        
+        # Collect witnesses that disagree with local state at the same sequence number
         dups = [state for state in states if state.state == States.duplicitous]
+
+        # Collect witnesses that are ahead of local state
         ahds = [state for state in states if state.state == States.ahead]
 
         if len(dups) > 0:
+            # Any duplicitous witness result is a terminal condition for this pass
             logger.info(f"{len(dups)} witnesses have a duplicitous event")
             for state in dups:
                 logger.info(
@@ -968,39 +1012,85 @@ class Sentinal(doing.DoDoer):
                 )
             return True
 
-        elif len(ahds) > 0:
-            # First check for duplicity among the witnesses that are ahead (possible only if toad is below
-            # super majority)
-            digs = set([state.dig for state in ahds])
-            if len(digs) > 1:  # Duplicity across witness sets
+        if len(ahds) > 0:
+            # Multiple "ahead" digests mean witnesses disagree on the next event
+            digs = {state.dig for state in ahds}
+            if len(digs) > 1:
+                # Witnesses disagree on the ahead event, so treat it as duplicitous
                 logger.info(
                     f"There are multiple duplicitous events on witnesses for {self.oid}"
                 )
                 return True
 
-            else:  # all witnesses that are ahead agree on the event
-                logger.info(
-                    f"{len(ahds)} witnesses have an event that is ahead of the local KEL:"
-                )
-
-            state = random.choice(ahds)
-            fn = self.hby.kevers[self.oid].sn + 1 if self.oid in self.hby.kevers else 0
-
-            qry = querying.SeqNoQuerier(
-                self.hby, self.hab, pre=self.oid, fn=fn, sn=state.sn
+            # All ahead witnesses agree, so schedule a follow-up query to catch local state up
+            logger.info(
+                f"{len(ahds)} witnesses have an event that is ahead of the local KEL:"
             )
-            self.extend([qry])
 
-        elif len(states) == 0:
+            # Any agreeing ahead witness can supply the target sequence number
+            state = random.choice(ahds)
+            qry = querying.SeqNoQuerier(
+                self.hby,
+                self.hab,
+                pre=self.oid,
+                fn=kever.sn + 1,
+                sn=state.sn,
+            )
+            # Launch the follow-up query 
+            self.extend([qry])
+            return None
+
+        state = random.choice(states)
+        logger.info(
+            f"Local key state for {self.oid} is consistent at seq no. {state.sn} with the "
+            f"{len(states)} (out of {len(kever.wits)} total) witnesses that responded."
+        )
+        return True
+
+    def watch(self, tymth, tock=0.0, **kwa):
+        """Poll each witness of the observed AID and record the key-state comparison result.
+
+        Parameters:
+            tymth: injected tymist wrapper
+            tock (float): scheduling interval injected by the Doist
+        """
+        # Initialize the pass and validate that the observed AID is pollable.
+        kever = yield from self._beginWatchPass(tymth, tock)
+        if kever is None:
+            return True
+
+        # Instantiate state record
+        states = []
+
+        # Create one shared timestamp 
+        queryTimestamp = helping.nowIso8601()
+
+        # Iterate through each witness
+        for wit in kever.wits:
+
+            # Collect witness state
+            collection = yield from self._collectWitnessState(wit, queryTimestamp)
+
+            # Persist the final per-witness outcome and keep successful states for resolution
+            outcome = self._recordWitnessOutcome(
+                wit=wit,
+                collection=collection,
+                kever=kever,
+            )
+            if outcome is None:
+                continue
+
+            # Keep successful adjudications for resolution 
+            states.append(outcome)
+
+        if len(states) == 0:
+
+            # If no witness yielded a usable state, the pass ends as unresponsive
             logger.info(f"Zero witnesses for {self.oid} responded.")
             return True
-        else:
-            state = random.choice(states)
-            logger.info(
-                f"Local key state for {self.oid} is consistent at seq no. {state.sn} with the "
-                f"{len(states)} (out of {len(kever.wits)} total) witnesses that responded."
-            )
-            return True
+
+        # Resolve duplicitous/ahead/consistent outcomes from the collected states
+        return self._resolveWitnessStates(kever, states)
 
     @staticmethod
     def diffState(wit, preksn, witksn):

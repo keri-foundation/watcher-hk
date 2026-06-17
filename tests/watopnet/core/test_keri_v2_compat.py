@@ -604,7 +604,7 @@ def test_query_shims_ignore_missing_authenticated_source():
     assert not tcp_shim.cues
 
 
-def test_oobi_always_uses_fixed_legacy_v1_json():
+def test_oobi_uses_default_v2_cesr_reply_policy():
     aid = WATCHER_AID
     calls = []
 
@@ -637,9 +637,9 @@ def test_oobi_always_uses_fixed_legacy_v1_json():
 
     response = client.simulate_get(f"/oobi/{aid}/controller")
     assert response.status_code == 200
-    assert calls[0]["version"] == kering.Vrsn_1_0
-    assert calls[0]["pvrsn"] == kering.Vrsn_1_0
-    assert calls[0]["kind"] == kering.Kinds.json
+    assert calls[0]["version"] == wat_eventing.DEFAULT_REPLY_VERSION
+    assert calls[0]["pvrsn"] == wat_eventing.DEFAULT_REPLY_VERSION
+    assert calls[0]["kind"] == kering.Kinds.cesr
 
 
 def test_tcp_reactant_parser_defaults_to_keri20():

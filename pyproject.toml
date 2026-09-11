@@ -30,7 +30,7 @@ dependencies = [
     "hio>=0.7.19",
     "keri @ git+https://github.com/WebOfTrust/keripy.git",
     "multicommand>=1.0.0",
-    "falcon==4.2.0",
+    "falcon>=4.2.0",
     "pyotp>=2.9.0",
 ]
 

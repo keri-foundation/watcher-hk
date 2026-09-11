@@ -67,9 +67,9 @@ Create a config directory with the KERI config file structure:
 
 .. code-block:: bash
 
-   mkdir -p /tmp/watcher-demo/keri/cf
+   mkdir -p /tmp/watcher-demo/keri/cf/main
 
-   cat > /tmp/watcher-demo/keri/cf/watopnet.json <<'EOF'
+   cat > /tmp/watcher-demo/keri/cf/main/watopnet.json <<'EOF'
    {
      "dt": "2022-01-20T12:57:59.823350+00:00",
      "watopnet": {
@@ -83,7 +83,8 @@ Create a config directory with the KERI config file structure:
 
    ``--config-dir`` must point to ``/tmp/watcher-demo`` (one level *above*
    ``keri/``), not to ``/tmp/watcher-demo/keri/cf/``. KERI appends
-   ``keri/cf/`` internally and looks for ``watopnet.json`` there.
+   ``keri/cf/main/`` internally — ``Configer`` defaults its ``base`` segment to
+   ``main`` — and looks for ``watopnet.json`` there.
 
 Step 2: Start the watcher
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -141,7 +142,7 @@ Configuration
 -------------
 
 The watcher server is configured via a KERI config file. A sample is provided at
-``scripts/keri/cf/watopnet.json``:
+``scripts/keri/cf/main/watopnet.json``:
 
 .. code-block:: json
 
@@ -156,7 +157,7 @@ The watcher server is configured via a KERI config file. A sample is provided at
 The first ``curls`` entry sets the watcher's advertised HTTP scheme,
 hostname, and port.  If a second entry is present, watcher-hk uses its
 port as the TCP port value. Pass the
-directory containing ``keri/cf/watopnet.json`` to ``--config-dir``.
+directory containing ``keri/cf/main/watopnet.json`` to ``--config-dir``.
 
 Running the Watcher
 -------------------
@@ -191,9 +192,6 @@ Key flags:
    * - ``--config-dir`` / ``-c``
      - —
      - Directory one level above ``keri/cf/`` containing the config file
-   * - ``--config-file``
-     - —
-     - Config filename override
    * - ``--loglevel``
      - ``INFO``
      - Log level: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``
@@ -257,13 +255,12 @@ Watcher server (``localhost:7632``)
      - Description
    * - ``POST``
      - ``/``
-     - Submit a KERI event (KEL/EXN/RPY/QRY) with CESR attachments
+     - Submit a KERI event (KEL/EXN/RPY/QRY) with CESR attachments. Requires the
+       ``CESR-Destination`` header naming a provisioned watcher AID.
    * - ``PUT``
      - ``/``
-     - Push CESR bytes into the inbound stream
-   * - ``GET``
-     - ``/oobi``
-     - OOBI resolution (default AID)
+     - Push CESR bytes into the inbound stream. Requires the
+       ``CESR-Destination`` header naming a provisioned watcher AID.
    * - ``GET``
      - ``/oobi/{aid}``
      - OOBI resolution endpoint
@@ -299,11 +296,22 @@ Troubleshooting
 
 **"No such file or directory" when starting**
     Ensure ``--config-dir`` points one level *above* ``keri/``, not inside
-    ``keri/cf/``. KERI looks for ``<config-dir>/keri/cf/watopnet.json``.
+    ``keri/cf/``. KERI looks for ``<config-dir>/keri/cf/main/watopnet.json``.
+    A config placed directly in ``keri/cf/`` is not read, and the service starts
+    with an empty configuration.
 
 **Port already in use**
     Change ``-H`` or ``--bootport``. Both servers must bind to unique ports.
-    Kill any existing ``watopnet`` processes first: ``pkill -f watopnet``.
+    If an earlier instance is still running, stop that specific process instead
+    of every process matching the name. If you started it in the foreground,
+    stop it with ``Ctrl-C``; if it runs under a service manager, stop that unit.
+    Otherwise identify the process bound to the port and confirm it is the
+    intended Watopnet instance before stopping it:
+
+    .. code-block:: bash
+
+       lsof -nP -iTCP:7631 -sTCP:LISTEN
+       lsof -nP -iTCP:7632 -sTCP:LISTEN
 
 **"Unknown sender key state"**
     This error can occur during KERI protocol exchanges (such as event submission

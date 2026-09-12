@@ -123,7 +123,8 @@ class KeveryQueryShim:
 class QueryKeveryShim:
     """Kevery adapter for the HTTP layer that restricts processing to a single watcher.
 
-    Exposes only ``processQuery``; all other event types are silently dropped.
+    Exposes ``processMsg`` (the f4b9 V2 parser dispatch entry point for query
+    messages) and ``processQuery``; all other event types are silently dropped.
     Validates that the querying source matches the watcher's authorised controller AID.
     """
 
@@ -135,6 +136,55 @@ class QueryKeveryShim:
         """
         self.watcher = watcher
         self.cues = cues if cues is not None else decking.Deck()
+
+    def processMsg(self, kwa=None):
+        """Process one non-key-event KERI message, dispatching only ``qry`` messages.
+
+        f4b9's Parser routes V2 query messages through this consolidated entry
+        point (the same one a real Kevery uses). The source and controller
+        sigers are recovered from the attached signature groups (``lsgs``) or,
+        failing that, the query's own ``i`` field, mirroring
+        ``keri.core.eventing.Kevery.processMsg``. All other message types are
+        dropped because this shim only answers queries for its one watcher.
+
+        Parameters:
+            kwa (dict | None): parser attachment dict containing ``serder``,
+                ``sigers``, ``cigars``, ``lsgs``, ``local``, etc.
+        """
+        kwa = dict(kwa or {})
+        serder = kwa.pop("serder", None)
+        if serder is None:
+            raise kering.ValidationError("Missing serder for message processing.")
+
+        if serder.ilk != kering.Ilks.qry:
+            # This shim only answers queries; other non-key-event types are
+            # silently dropped (they belong to a different watcher surface).
+            return
+
+        kwa.setdefault("sigers", [])
+        if kwa.get("lsgs"):
+            # last signature groups carry the querier's prefix + controller sigs
+            pre, sigers = kwa["lsgs"][-1]
+            kwa["source"] = pre
+            kwa["sigers"] = sigers
+        elif kwa["sigers"] and not kwa.get("source"):
+            kwa["source"] = eventing.Prefixer(qb64=serder.pre)
+
+        if not (kwa.get("source") or kwa.get("cigars", [])):
+            raise kering.ValidationError(
+                f"Missing attached requester source for query msg = {serder.pretty()}."
+            )
+
+        route = serder.ked["r"]
+        if route in ("logs", "ksn", "mbx"):
+            self.processQuery(
+                serder,
+                source=kwa.get("source"),
+                sigers=kwa.get("sigers"),
+                cigars=kwa.get("cigars"),
+            )
+        # Other query routes (tels/tsn) target TEL state, which this watcher
+        # does not serve; they are dropped here.
 
     def processQuery(self, serder, source=None, sigers=None, cigars=None):
         """Process an incoming query if the source matches this watcher's controller.

@@ -858,3 +858,99 @@ def test_sentinal_missing_endpoint_persists_real_witq_error(monkeypatch):
         )
     finally:
         db.close(clear=True)
+
+
+def test_query_kevery_shim_processmsg_answers_signed_ksn_query():
+    """A controller-signed ksn query is answered through the real f4b9 parser.
+
+    Regression for the f4b9 V2 parser routing V2 query messages through
+    ``kvy.processMsg``. watopnet's ``QueryKeveryShim`` must implement that entry
+    point (not only ``processQuery``) or the watcher silently never answers a
+    controller's direct key-state query over the public :7633 listener.
+    """
+    import io
+
+    from keri.app.httping import CESR_ATTACHMENT_HEADER
+    from keri.db import dbing
+
+    ctlHby = habbing.Habery(name="ctl-qry", base="test", temp=True)
+    witHby = habbing.Habery(name="wit-qry", base="test", temp=True)
+    watHby = habbing.Habery(name="wat-qry", base="test", temp=True)
+
+    try:
+        ctlHab = ctlHby.makeHab(name="ctl", icount=1, isith="1", ncount=1, nsith="1", wits=[], toad=0)
+        witHab = witHby.makeHab(name="wit", transferable=False)
+        watHab = watHby.makeHab(name="wat", icount=1, isith="1", ncount=0, nsith="0", wits=[], toad=0)
+        wat_db = dbing.LMDBer(name="wat-qry-db", temp=True)
+        watcher = watching.Watcher(
+            wty=SimpleNamespace(url="http://127.0.0.1:7633"),
+            db=wat_db,
+            hby=watHby,
+            hab=watHab,
+            cid=ctlHab.pre,
+        )
+
+        # Witness ingests controller icp sn0 + rot sn1 and issues a real receipt.
+        witKvy = eventing.Kevery(db=witHby.db, lax=True, local=False)
+        witPsr = wat_httping.parsing.Parser(kvy=witKvy, framed=True)
+        icp = ctlHab.msgOwnEvent(sn=0)
+        witPsr.parseOne(ims=bytearray(icp))
+        ctlHab.rotate(toad=1, cuts=[], adds=[witHab.pre])
+        rot = ctlHab.msgOwnEvent(sn=1)
+        witPsr.parseOne(ims=bytearray(rot))
+        ctlHab.psr.parseOne(ims=bytearray(witHab.receipt(serder=ctlHab.kever.serder)))
+
+        # Watcher ingests icp sn0 and the canonical witnessed replay of rot sn1.
+        watcher.psr.parseOne(ims=bytearray(icp), local=True, version=kering.Vrsn_2_0)
+        wigs = ctlHab.db.wigs.get(keys=dbing.dgKey(ctlHab.pre, ctlHab.kever.serder.said))
+        sigers = ctlHab.db.sigs.get(keys=dbing.dgKey(ctlHab.pre, ctlHab.kever.serder.said))
+        replay = eventing.messagize(
+            ctlHab.kever.serder,
+            sigers=sigers,
+            wigers=wigs,
+            framed=False,
+            gvrsn=kering.Vrsn_2_0,
+        )
+        watcher.psr.parseOne(ims=bytearray(replay), local=True, version=kering.Vrsn_2_0)
+        watcher.kvy.processEscrows()
+        assert watcher.kvy.kevers[ctlHab.pre].sn == 1
+
+        # Controller signs a ksn key-state query with SealLast (lsgs).
+        qserder = eventing.query(
+            pre=ctlHab.pre,
+            route="ksn",
+            query={"i": ctlHab.pre, "src": watcher.hab.pre},
+            version=kering.Vrsn_2_0,
+            pvrsn=kering.Vrsn_2_0,
+            kind=eventing.Kinds.json,
+        )
+        endorsed = ctlHab.endorse(serder=qserder, last=True)
+        body = bytes(endorsed[:qserder.size])
+        attachment = bytes(endorsed[qserder.size:]).decode("utf-8")
+
+        class Req:
+            method = "POST"
+            content_type = "application/cesr"
+            headers = {
+                CESR_DESTINATION_HEADER: watcher.hab.pre,
+                CESR_ATTACHMENT_HEADER: attachment,
+            }
+            bounded_stream = io.BytesIO(body)
+
+        wty = SimpleNamespace(lookup=lambda aid: watcher if aid == watcher.hab.pre else None)
+        rep = Response()
+        wat_httping.HttpEnd(wty=wty).on_post(Req(), rep)
+
+        assert rep.status == falcon.HTTP_200, rep.status
+        assert rep.data, "expected an endorsed /ksn reply body"
+        reply = eventing.SerderKERI(raw=bytes(rep.data))
+        assert reply.ked["t"] == "rpy"
+        assert reply.ked["r"].startswith("/ksn/")
+        keystate = reply.ked["a"]
+        assert keystate["i"] == ctlHab.pre
+        assert keystate["s"] == "1"
+    finally:
+        watcher.hby.close(clear=True)
+        ctlHby.close(clear=True)
+        witHby.close(clear=True)
+        watHby.close(clear=True)

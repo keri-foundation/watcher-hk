@@ -8,6 +8,7 @@ HTTP endpoint and throttle middleware for the watcher server.
 """
 
 import datetime
+import ipaddress
 
 import falcon
 from keri.app import httping
@@ -21,6 +22,47 @@ from watopnet.core import basing
 from watopnet.core.eventing import QueryKeveryShim
 
 DEFAULT_PROTOCOL_VERSION = kering.Vrsn_2_0
+
+
+_TRUSTED_PROXY_IPS = frozenset(("127.0.0.1", "::1"))
+
+
+def _valid_ip(value):
+    """Return a normalized IP address string, or ``None`` for invalid input."""
+    if isinstance(value, tuple):
+        value = value[0] if value else None
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None
+
+
+def _client_ip(req):
+    """Return the safe throttle identity for a Falcon request.
+
+    Falcon's ``access_route`` is assembled from forwarding headers and is
+    therefore consulted only when the actual socket peer is the local reverse
+    proxy. Falcon orders the original client first in that route.
+    """
+    peer = _valid_ip(req.remote_addr)
+    if peer not in _TRUSTED_PROXY_IPS or not isinstance(req, falcon.Request):
+        return peer or "unknown"
+
+    try:
+        route = req.access_route
+    except (AttributeError, TypeError):
+        return peer
+
+    if route:
+        client = _valid_ip(route[0])
+        if client is not None:
+            return client
+
+    return peer
 
 
 class HttpEnd:
@@ -262,11 +304,7 @@ class Throttle(object):
             req (Request): Falcon HTTP request object
             resp (Response): Falcon HTTP response object
         """
-        ip = req.remote_addr
-        if isinstance(ip, tuple):
-            ip = ip[0]
-        if not ip:
-            ip = req.access_route[-1] if req.access_route else "unknown"
+        ip = _client_ip(req)
         now = helping.nowUTC()
 
         reqs = self.db.ips.get(keys=(ip,))

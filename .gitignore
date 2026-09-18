@@ -71,6 +71,15 @@ instance/
 # Sphinx documentation
 docs/_build/
 
+# Generated Sphinx autosummary API stubs
+docs/api/
+
+# Sphinx Doctor local diagnostics mirror
+.sphinx-diagnostics/
+
+# Local docs virtual environment
+.venv-docs/
+
 # PyBuilder
 .pybuilder/
 target/

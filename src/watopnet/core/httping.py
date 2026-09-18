@@ -10,6 +10,7 @@ HTTP endpoint and throttle middleware for the watcher server.
 import datetime
 
 import falcon
+from keri import kering
 from keri.app import httping
 from keri.app.httping import CESR_DESTINATION_HEADER
 from keri.core import eventing, coring, parsing
@@ -102,7 +103,12 @@ class HttpEnd:
                 Ilks.exn,
                 Ilks.rpy,
             ):
-                watcher.psr.parseOne(ims=msg, local=True)
+                try:
+                    watcher.psr.parseOne(ims=msg, local=True)
+                except kering.KeriError as ex:
+                    raise falcon.HTTPBadRequest(
+                        description=f"invalid KERI message: {ex}"
+                    ) from ex
 
                 rep.set_header("Content-Type", "application/json")
                 rep.status = falcon.HTTP_204
@@ -112,7 +118,12 @@ class HttpEnd:
 
             elif ilk in (Ilks.qry,):
                 kvy = QueryKeveryShim(watcher=watcher)
-                parsing.Parser(kvy=kvy).parseOne(ims=msg, local=False)
+                try:
+                    parsing.Parser(kvy=kvy).parseOne(ims=msg, local=False)
+                except kering.KeriError as ex:
+                    raise falcon.HTTPBadRequest(
+                        description=f"invalid KERI query: {ex}"
+                    ) from ex
 
                 if not kvy.cues:
                     rep.set_header("Content-Type", "application/json")
@@ -179,7 +190,12 @@ class HttpEnd:
         if watcher is None:
             raise falcon.HTTPNotFound(title=f"unknown destination AID {aid}")
 
-        watcher.psr.parse(ims=req.bounded_stream.read(), local=True)
+        try:
+            watcher.psr.parse(ims=req.bounded_stream.read(), local=True)
+        except kering.KeriError as ex:
+            raise falcon.HTTPBadRequest(
+                description=f"invalid KERI stream: {ex}"
+            ) from ex
 
         rep.set_header("Content-Type", "application/json")
         rep.status = falcon.HTTP_204

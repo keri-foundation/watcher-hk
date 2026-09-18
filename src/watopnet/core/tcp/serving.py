@@ -177,6 +177,13 @@ class Reactant(doing.DoDoer):
                     serder = cue["serder"]
                     wid = cue["src"]
                     watcher = self.wty.lookup(wid)
+                    if watcher is None:
+                        logger.info(
+                            "reactant dropping stale reply cue for unknown watcher %s",
+                            wid,
+                        )
+                        yield
+                        continue
 
                     msg = watcher.hab.endorse(serder=serder)
                     self.sendMessage(msg)

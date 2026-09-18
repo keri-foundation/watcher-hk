@@ -5,6 +5,7 @@ KERI
 testing watopnet.core.httping module
 
 """
+
 from types import SimpleNamespace
 
 import falcon

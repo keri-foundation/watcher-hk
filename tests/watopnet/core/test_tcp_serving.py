@@ -5,6 +5,7 @@ KERI
 testing watopnet.core.tcp.serving module
 
 """
+
 from types import SimpleNamespace
 
 from watopnet.core.tcp.serving import Reactant
@@ -13,7 +14,9 @@ WATCHER_AID = "BGbLRtLXIslZvTfYz97dS9_EzQxp8kSTAMMtW-LmlXMI"
 
 
 def test_tcp_reactant_drops_stale_reply_cue_without_crashing():
-    remoter = SimpleNamespace(rxbs=bytearray(), wind=lambda tymth: None, tx=lambda msg: None)
+    remoter = SimpleNamespace(
+        rxbs=bytearray(), wind=lambda tymth: None, tx=lambda msg: None
+    )
     reactant = Reactant(
         wty=SimpleNamespace(lookup=lambda aid: None),
         remoter=remoter,

@@ -5,6 +5,7 @@ KERI
 testing watopnet.core.watching package
 
 """
+
 import errno
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -103,7 +104,10 @@ def test_sentinal_pins_unresolved_witness_endpoint_without_crashing(monkeypatch)
     assert keys == ("WATCHER_AID", "OBSERVED_AID", "WIT_1")
     assert query.response_received is False
     assert query.state == States.unresponsive
-    assert query.error == "Missing witness endpoint: unable to query witness WIT_1, no http endpoint"
+    assert (
+        query.error
+        == "Missing witness endpoint: unable to query witness WIT_1, no http endpoint"
+    )
 
 
 @pytest.mark.parametrize(

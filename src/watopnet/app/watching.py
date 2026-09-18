@@ -7,6 +7,7 @@ watopnet.app.watching module
 Core watcher orchestration: dual HTTP server setup, Watchery lifecycle management,
 per-watcher Doer trees, witness-polling Sentinals, and boot API endpoints.
 """
+
 import datetime
 import errno
 import json

@@ -6,6 +6,7 @@ watopnet.app.cli.commands.start module
 ``watopnet start`` subcommand: configures logging, validates arguments,
 and launches the Watcher Operational Network under a real-time Doist.
 """
+
 import argparse
 import logging
 import os

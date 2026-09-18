@@ -6,6 +6,7 @@ watopnet.app.cli module
 CLI entry point: discovers subcommands via multicommand and runs the resulting
 doers under a real-time Doist event loop.
 """
+
 import os
 
 import multicommand

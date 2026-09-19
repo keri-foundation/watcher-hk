@@ -6,8 +6,10 @@ watopnet.app.cli.commands.start module
 ``watopnet start`` subcommand: configures logging, validates arguments,
 and launches the Watcher Operational Network under a real-time Doist.
 """
+
 import argparse
 import logging
+import os
 
 from hio.base import doing
 from keri import __version__
@@ -157,6 +159,6 @@ def runWatcher(args, expire=0.0):
         cafilepath=args.cafilepath,
     )
 
-    tock = 0.00125
+    tock = float(os.getenv("WATOPNET_DOIST_TOCK", "0.03125"))
     doist = doing.Doist(limit=expire, tock=tock, real=True)
     doist.do(doers=doers)

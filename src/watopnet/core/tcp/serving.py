@@ -100,9 +100,9 @@ class Directant(doing.DoDoer):
 class Reactant(doing.DoDoer):
     """DoDoer that handles a single TCP connection: parses inbound CESR and sends replies.
 
-    Owns a ``KeveryQueryShim`` parser that accepts only query messages and routes them
-    to the appropriate watcher.  Reply and replay cues produced by the shim are
-    sent back over the TCP connection by ``cueDo``.
+    Owns a ``QueryRouter`` parser that selects the watcher named by each query and
+    delegates it to the shared ``QueryKevery``.  Reply and replay cues produced by
+    the parser are sent back over the TCP connection by ``cueDo``.
     """
 
     def __init__(self, wty, remoter, doers=None, **kwa):
@@ -115,7 +115,7 @@ class Reactant(doing.DoDoer):
         """
         self.cues = decking.Deck()
         self.wty = wty
-        self.kvy = eventing.KeveryQueryShim(wty=wty, cues=self.cues)
+        self.kvy = eventing.QueryRouter(wty=wty, cues=self.cues)
         self.remoter = remoter
 
         doers = doers if doers is not None else []

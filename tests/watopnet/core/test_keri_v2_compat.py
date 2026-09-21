@@ -1205,4 +1205,3 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         ctlHby.close(clear=True)
         witHby.close(clear=True)
         watHby.close(clear=True)
-        watHby.close(clear=True)

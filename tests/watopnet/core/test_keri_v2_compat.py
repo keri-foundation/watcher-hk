@@ -695,17 +695,21 @@ def test_query_replies_are_normalized_to_fixed_v2_json(monkeypatch):
     """
 
     def fakeProcessQuery(self, serder, *, source=None, sigers=None, cigars=None, **kwa):
+        # Mirrors Keripy's ksn route: ``pre = q.i`` and ``route = /ksn/{src}``, and
+        # the reply kind follows the requester. A controller querying a watcher over
+        # V2 therefore yields an already-V2 JSON reply that is still addressed to the
+        # queried AID, which is exactly the shape the fast path must not trust.
         self.cues.push(
             dict(
                 kin="reply",
                 src=WATCHER_AID,
                 route="/ksn",
                 serder=eventing.reply(
-                    pre=WATCHER_AID,
-                    route=f"/ksn/{WATCHER_AID}",
+                    pre=OBSERVED_AID,
+                    route=f"/ksn/{OBSERVED_AID}",
                     data={"i": OBSERVED_AID},
                     pvrsn=kering.Vrsn_2_0,
-                    kind=eventing.Kinds.cesr,
+                    kind=eventing.Kinds.json,
                 ),
                 dest=source.qb64,
             )
@@ -1180,6 +1184,9 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         reply = eventing.SerderKERI(raw=bytes(rep.data))
         assert reply.ked["t"] == "rpy"
         assert reply.ked["r"].startswith("/ksn/")
+        # The watcher answers as itself; Keripy stamps an upstream reply with the
+        # queried AID, so the addressed reply must be re-attributed.
+        assert reply.ked["i"] == watcher.hab.pre
         keystate = reply.ked["a"]
         assert keystate["i"] == ctlHab.pre
         assert keystate["s"] == "1"
@@ -1198,6 +1205,7 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         tcp_reply = tcp_cue["serder"]
         assert kering.deversify(tcp_reply.ked["v"]).pvrsn == kering.Vrsn_2_0
         assert tcp_reply.kind == eventing.Kinds.json
+        assert tcp_reply.ked["i"] == watcher.hab.pre
         # Both transports answer with the same watcher key state.
         assert tcp_reply.ked["a"] == keystate
     finally:

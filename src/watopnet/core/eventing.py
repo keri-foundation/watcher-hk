@@ -98,7 +98,15 @@ class QueryKevery(eventing.Kevery):
             return cue
 
         reply = cue["serder"]
-        if reply.pvrsn == DEFAULT_REPLY_VERSION and reply.kind == eventing.Kinds.json:
+        # Keripy answers a ``ksn`` query with ``pre = q.i`` and mirrors the requester's
+        # version and kind, so an incoming V2 JSON reply can already be correctly framed
+        # while still being attributed to the queried AID. Only a reply that is already
+        # addressed by the watcher may pass through unchanged.
+        if (
+            reply.pvrsn == DEFAULT_REPLY_VERSION
+            and reply.kind == eventing.Kinds.json
+            and reply.ked["i"] == self.watcher.hab.pre
+        ):
             return cue
 
         updated = dict(cue)

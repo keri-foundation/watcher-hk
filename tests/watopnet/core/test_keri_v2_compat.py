@@ -427,6 +427,50 @@ def test_http_put_maps_parser_errors_to_bad_request():
     assert "invalid KERI stream" in exc.value.description
 
 
+def test_http_put_persists_key_state_for_signed_event():
+    """A valid signed PUT must persist key state for the event AID.
+
+    Regression coverage for the ``piped=True`` parse flag: it returns before the
+    extracted message reaches the kevery, so the request still answers 204 while
+    storing no key state for the controller. The assertion therefore checks the
+    persisted state rather than the status code alone.
+    """
+    chby = habbing.Habery(name="keri-v2-signed-put-controller", temp=True)
+    db = basing.Baser(name="keri-v2-signed-put-persist", temp=True)
+    wty = Watchery(db=db, temp=True)
+
+    try:
+        chab = chby.makeHab(name="ctrl")
+        watcher = wty.createWatcher(cid=CONTROLLER_AID)
+
+        serder = chab.kever.serder
+        sigers = [sig for _, sig in chab.db.sigs.getTopItemIter(keys=(serder.said,))]
+        raw = eventing.messagize(serder=serder, sigers=sigers)
+
+        req = SimpleNamespace(
+            method="PUT",
+            headers={CESR_DESTINATION_HEADER: watcher.hab.pre},
+            bounded_stream=SimpleNamespace(read=lambda: raw),
+        )
+        rep = Response()
+
+        wat_httping.HttpEnd(wty=wty).on_put(req, rep)
+
+        assert rep.status == falcon.HTTP_204
+
+        # The accepted event must actually be persisted for the controller
+        assert chab.pre in watcher.hab.kevers
+        assert watcher.hab.kevers[chab.pre].sn == 0
+        assert chab.pre in watcher.hby.db.kels.get(keys=(chab.pre,))
+    finally:
+        for watcher in list(wty.wats.values()):
+            if watcher.verifier.reger.opened:
+                watcher.verifier.reger.close(clear=True)
+            watcher.hby.close(clear=True)
+        db.close(clear=True)
+        chby.close(clear=True)
+
+
 def test_throttle_uses_remote_addr_instead_of_forwarded_route():
     """Test that rate-limit is done by the connected peer address instead of forwarded client hints."""
     

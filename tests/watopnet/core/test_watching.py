@@ -188,3 +188,14 @@ def test_adding_watched(mockHelpingNowUTC):
 
         observed = watcher.hby.db.obvs.get(keys=keys)
         assert observed.enabled is True
+
+
+def test_health_end_returns_no_content():
+    endpoint = watching.HealthEnd()
+    app = falcon.App()
+    app.add_route("/health", endpoint)
+    client = testing.TestClient(app)
+
+    response = client.simulate_get("/health")
+
+    assert response.status == falcon.HTTP_NO_CONTENT

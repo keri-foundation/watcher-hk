@@ -107,6 +107,7 @@ Set `DEBUG_WATCHER=1` in your environment to print full tracebacks on errors.
 | `POST` | `/watchers` | Provision a new watcher for a controller AID. Body: `{"aid": "<qb64-AID>", "oobi": "<optional-oobi-url>"}`. Returns `{cid, eid, oobis}`. |
 | `DELETE` | `/watchers/{eid}` | Delete a watcher by its endpoint identifier. |
 | `GET` | `/watchers/{eid}/status` | Get watcher status: all observed AIDs and per-witness key state results. |
+| `GET` | `/health` | Health check, returns `204 No Content`. |
 
 ### Watcher server (`localhost:7632`)
 

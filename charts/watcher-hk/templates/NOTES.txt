@@ -1,0 +1,31 @@
+watcher-hk has been deployed.
+
+Components:
+  - {{ include "watcherhk.fullname" . }}            StatefulSet ({{ .Values.replicaCount }} independent replicas)
+  - {{ include "watcherhk.fullname" . }}-headless   headless Service (in-cluster per-pod DNS + boot API)
+{{- if .Values.ingress.enabled }}
+  - {{ include "watcherhk.fullname" . }}            Ingress (one host rule per replica)
+{{- end }}
+
+Check the pods are ready:
+  kubectl get pods -l app.kubernetes.io/instance={{ .Release.Name }} -n {{ .Release.Namespace }}
+
+Confirm a replica's boot API is up (boot server only, ClusterIP-only, never exposed via Ingress):
+  kubectl exec {{ include "watcherhk.fullname" . }}-0 -n {{ .Release.Namespace }} -- curl -s -i localhost:{{ .Values.ports.boot }}/health
+
+Each replica already multiplexes an arbitrary number of watcher identities via its own boot
+API -- they aren't tied 1:1 to ordinals. Provision a watcher identity on a given replica with:
+  kubectl exec {{ include "watcherhk.fullname" . }}-0 -n {{ .Release.Namespace }} -- \
+    curl -s -X POST localhost:{{ .Values.ports.boot }}/watchers -H 'content-type: application/json' \
+    -d '{"aid": "<controller-AID>"}'
+{{- if .Values.ingress.enabled }}
+
+Each replica is externally reachable at its own hostname:
+{{- range $i := until (int .Values.replicaCount) }}
+  - https://watcher-{{ $i }}.{{ $.Values.baseDomain }}/
+{{- end }}
+{{- else }}
+
+Ingress is disabled (ingress.enabled=false) -- replicas are only reachable in-cluster via the
+headless Service, e.g. {{ include "watcherhk.fullname" . }}-0.{{ include "watcherhk.fullname" . }}-headless:{{ .Values.ports.watcher }}
+{{- end }}

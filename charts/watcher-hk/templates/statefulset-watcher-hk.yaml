@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "watcherhk.fullname" . }}
+  labels:
+    {{- include "watcherhk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+spec:
+  serviceName: {{ include "watcherhk.fullname" . }}-headless
+  replicas: {{ .Values.replicaCount }}
+  # Replicas are fully independent watopnet nodes with no startup ordering
+  # dependency on each other -- no reason to pay for the default OrderedReady
+  # one-at-a-time startup.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "watcherhk.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: watcher-hk
+  template:
+    metadata:
+      labels:
+        {{- include "watcherhk.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: watcher-hk
+    spec:
+      serviceAccountName: {{ include "watcherhk.serviceAccountName" . }}
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: watcher-hk
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["docker/scripts/watopnet.sh"]
+          env:
+            - name: WATOPNET_BASE_DOMAIN
+              value: {{ required "baseDomain is required" .Values.baseDomain | quote }}
+            - name: WATOPNET_HTTP_PORT
+              value: {{ .Values.ports.watcher | quote }}
+            - name: WATOPNET_BOOT_PORT
+              value: {{ .Values.ports.boot | quote }}
+          ports:
+            - name: watcher
+              containerPort: {{ .Values.ports.watcher }}
+            - name: boot
+              containerPort: {{ .Values.ports.boot }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: boot
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: boot
+            initialDelaySeconds: 20
+          volumeMounts:
+            - name: keri-data
+              mountPath: /usr/local/var/keri
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+  # Each replica gets its own PVC via volumeClaimTemplates (no shared RWO PVC),
+  # so default RollingUpdate is safe.
+  #
+  # PVCs are named deterministically (keri-data-<statefulset-name>-<ordinal>):
+  # Retain means scaling replicas down and back up reattaches the same PVC to
+  # the same ordinal, restoring that node's watcher identities/keystores intact
+  # rather than starting fresh -- watcher identity private key material is
+  # irreplaceable, so accidental scale-down must not destroy it.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  volumeClaimTemplates:
+    - metadata:
+        name: keri-data
+        labels:
+          {{- include "watcherhk.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          - {{ .Values.persistence.accessMode }}
+        {{- if .Values.persistence.storageClassName }}
+        storageClassName: {{ .Values.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}

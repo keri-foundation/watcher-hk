@@ -217,7 +217,7 @@ src/watopnet/
 │   └── watching.py             # Watchery, Watcher, boot/watcher HTTP server setup
 └── core/
     ├── basing.py               # LMDB Baser and dataclasses (Wat, WitnessQuery, Requests)
-    ├── eventing.py             # KeveryQueryShim / QueryKeveryShim (KERI event routing)
+    ├── eventing.py             # QueryKevery / QueryRouter (KERI query processing/routing)
     ├── httping.py              # HttpEnd (KERI event HTTP endpoint) + Throttle middleware
     ├── oobing.py               # OOBIEnd (OOBI HTTP endpoint)
     └── tcp/serving.py          # Directant (TCP server) + Reactant (per-connection handler)

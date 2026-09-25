@@ -155,7 +155,9 @@ def test_http_query_parser_uses_inbound_keri10_version(monkeypatch):
         lambda req: SimpleNamespace(payload=serder.ked, attachments=""),
     )
 
-    watcher = SimpleNamespace(cid=CONTROLLER_AID, hab=SimpleNamespace())
+    watcher = SimpleNamespace(
+        cid=CONTROLLER_AID, hab=SimpleNamespace(db=SimpleNamespace())
+    )
     wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
     req = SimpleNamespace(
         method="POST",
@@ -197,7 +199,9 @@ def test_http_query_parser_uses_inbound_keri2_version(monkeypatch):
         lambda req: SimpleNamespace(payload=serder.ked, attachments=""),
     )
 
-    watcher = SimpleNamespace(cid=CONTROLLER_AID, hab=SimpleNamespace())
+    watcher = SimpleNamespace(
+        cid=CONTROLLER_AID, hab=SimpleNamespace(db=SimpleNamespace())
+    )
     wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
     req = SimpleNamespace(
         method="POST",
@@ -313,7 +317,9 @@ def test_http_post_maps_query_parser_errors_to_bad_request(monkeypatch):
 
     monkeypatch.setattr(wat_httping.parsing, "Parser", FailingParser)
 
-    watcher = SimpleNamespace(cid=CONTROLLER_AID, hab=SimpleNamespace())
+    watcher = SimpleNamespace(
+        cid=CONTROLLER_AID, hab=SimpleNamespace(db=SimpleNamespace())
+    )
     wty = SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None)
     req = SimpleNamespace(
         method="POST",
@@ -682,42 +688,41 @@ def test_throttle_ignores_forwarding_route_without_socket_peer():
 
 
 def test_query_replies_are_normalized_to_fixed_v2_json(monkeypatch):
-    class FakeKevery:
-        def __init__(self, db, local, cues):
-            self.cues = cues
+    """A watcher answers with a V2 JSON reply whatever folded the query.
 
-        def processQuery(self, serder, source=None, sigers=None, cigars=None):
-            self.cues.push(
-                dict(
-                    kin="reply",
-                    src=WATCHER_AID,
-                    route="/ksn",
-                    serder=eventing.reply(
-                        pre=WATCHER_AID,
-                        route=f"/ksn/{WATCHER_AID}",
-                        data={"i": OBSERVED_AID},
-                        pvrsn=kering.Vrsn_2_0,
-                        kind=eventing.Kinds.cesr,
-                    ),
-                    dest=source.qb64,
-                )
+    KERI mirrors the requester's version and kind and stamps the reply with
+    ``pre = q.i``; watcher replies must be V2 JSON attributed to the watcher AID.
+    """
+
+    def fakeProcessQuery(self, serder, *, source=None, sigers=None, cigars=None, **kwa):
+        # Mirrors Keripy's ksn route: ``pre = q.i`` and ``route = /ksn/{src}``, and
+        # the reply kind follows the requester. A controller querying a watcher over
+        # V2 therefore yields an already-V2 JSON reply that is still addressed to the
+        # queried AID, which is exactly the shape the fast path must not trust.
+        self.cues.push(
+            dict(
+                kin="reply",
+                src=WATCHER_AID,
+                route="/ksn",
+                serder=eventing.reply(
+                    pre=OBSERVED_AID,
+                    route=f"/ksn/{OBSERVED_AID}",
+                    data={"i": OBSERVED_AID},
+                    pvrsn=kering.Vrsn_2_0,
+                    kind=eventing.Kinds.json,
+                ),
+                dest=source.qb64,
             )
+        )
 
-    monkeypatch.setattr(wat_eventing.eventing, "Kevery", FakeKevery)
+    # QueryKevery calls super().processQuery, so patching the KERI method
+    # exercises the real inheritance path instead of a stand-in base class.
+    monkeypatch.setattr(eventing.Kevery, "processQuery", fakeProcessQuery)
 
     watcher = SimpleNamespace(
         cid=CONTROLLER_AID,
         hab=SimpleNamespace(pre=WATCHER_AID, db=SimpleNamespace()),
     )
-    shims = [
-        wat_eventing.QueryKeveryShim(watcher=watcher, cues=decking.Deck()),
-        wat_eventing.KeveryQueryShim(
-            wty=SimpleNamespace(
-                lookup=lambda aid: watcher if aid == WATCHER_AID else None
-            ),
-            cues=decking.Deck(),
-        ),
-    ]
 
     for pvrsn in (kering.Vrsn_1_0, kering.Vrsn_2_0):
         query = eventing.query(
@@ -729,20 +734,20 @@ def test_query_replies_are_normalized_to_fixed_v2_json(monkeypatch):
             kind=eventing.Kinds.json,
         )
 
-        for shim in shims:
-            shim.processQuery(
-                serder=query,
-                source=SimpleNamespace(qb64=CONTROLLER_AID),
-                sigers=[],
-                cigars=[],
-            )
-            cue = shim.cues.pull()
-            assert kering.deversify(cue["serder"].ked["v"]).pvrsn == kering.Vrsn_2_0
-            assert cue["serder"].kind == kering.Kinds.json
-            assert cue["serder"].ked["i"] == WATCHER_AID
+        kvy = wat_eventing.QueryKevery(watcher=watcher, cues=decking.Deck())
+        kvy.processQuery(
+            serder=query,
+            source=SimpleNamespace(qb64=CONTROLLER_AID),
+            sigers=[],
+            cigars=[],
+        )
+        cue = kvy.cues.pull()
+        assert kering.deversify(cue["serder"].ked["v"]).pvrsn == kering.Vrsn_2_0
+        assert cue["serder"].kind == eventing.Kinds.json
+        assert cue["serder"].ked["i"] == WATCHER_AID
 
 
-def test_query_shims_ignore_missing_authenticated_source():
+def test_query_handlers_ignore_missing_authenticated_source():
     watcher = SimpleNamespace(
         cid=CONTROLLER_AID,
         hab=SimpleNamespace(pre=WATCHER_AID, db=SimpleNamespace()),
@@ -753,17 +758,87 @@ def test_query_shims_ignore_missing_authenticated_source():
         query={"i": OBSERVED_AID, "src": WATCHER_AID},
     )
 
-    http_shim = wat_eventing.QueryKeveryShim(watcher=watcher, cues=decking.Deck())
-    tcp_shim = wat_eventing.KeveryQueryShim(
+    kvy = wat_eventing.QueryKevery(watcher=watcher, cues=decking.Deck())
+    router = wat_eventing.QueryRouter(
         wty=SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None),
         cues=decking.Deck(),
     )
 
-    http_shim.processQuery(serder=query, source=None, sigers=[], cigars=[])
-    tcp_shim.processQuery(serder=query, source=None, sigers=[], cigars=[])
+    kvy.processQuery(serder=query, source=None, sigers=[], cigars=[])
+    router.processQuery(serder=query, source=None, sigers=[], cigars=[])
 
-    assert not http_shim.cues
-    assert not tcp_shim.cues
+    assert not kvy.cues
+    assert not router.cues
+
+
+def test_query_kevery_inherits_keripy_message_processing():
+    """Watcher query handling inherits KERI behavior instead of copying it."""
+    assert issubclass(wat_eventing.QueryKevery, eventing.Kevery)
+
+    # Message processing is inherited, not re-implemented in watopnet.
+    assert "processMsg" not in wat_eventing.QueryKevery.__dict__
+    assert "processMsg" not in vars(wat_eventing)
+
+    # The watcher-specific policy is the query override.
+    assert "processQuery" in wat_eventing.QueryKevery.__dict__
+
+    # The duplicated adapters are gone.
+    assert not hasattr(wat_eventing, "QueryKeveryShim")
+    assert not hasattr(wat_eventing, "KeveryQueryShim")
+
+
+def test_query_router_drops_unroutable_and_unauthorized_queries():
+    """Routing failures are handled by selection, not by query processing."""
+    watcher = SimpleNamespace(
+        cid=CONTROLLER_AID,
+        hab=SimpleNamespace(pre=WATCHER_AID, db=SimpleNamespace()),
+    )
+    router = wat_eventing.QueryRouter(
+        wty=SimpleNamespace(lookup=lambda aid: watcher if aid == WATCHER_AID else None),
+        cues=decking.Deck(),
+    )
+
+    # Missing q.src: nothing to route.
+    noSrc = eventing.query(
+        pre=CONTROLLER_AID,
+        route="ksn",
+        query={"i": OBSERVED_AID},
+        version=kering.Vrsn_2_0,
+        pvrsn=kering.Vrsn_2_0,
+        kind=eventing.Kinds.json,
+    )
+    router.processMsg({"serder": noSrc, "sigers": [], "cigars": []})
+
+    # Unknown watcher: q.src does not resolve through Watchery.
+    unknown = eventing.query(
+        pre=CONTROLLER_AID,
+        route="ksn",
+        query={"i": OBSERVED_AID, "src": OBSERVED_AID},
+        version=kering.Vrsn_2_0,
+        pvrsn=kering.Vrsn_2_0,
+        kind=eventing.Kinds.json,
+    )
+    router.processMsg({"serder": unknown, "sigers": [], "cigars": []})
+
+    # Wrong controller: routed, but the shared QueryKevery policy rejects it.
+    wrong = eventing.query(
+        pre=OBSERVED_AID,
+        route="ksn",
+        query={"i": OBSERVED_AID, "src": WATCHER_AID},
+        version=kering.Vrsn_2_0,
+        pvrsn=kering.Vrsn_2_0,
+        kind=eventing.Kinds.json,
+    )
+    router.processMsg(
+        {
+            "serder": wrong,
+            "sigers": [],
+            "cigars": [],
+            "source": SimpleNamespace(qb64=OBSERVED_AID),
+        }
+    )
+
+    assert not router.cues
 
 
 @pytest.mark.parametrize("pvrsn", (kering.Vrsn_1_0, kering.Vrsn_2_0))
@@ -1020,3 +1095,121 @@ def test_sentinal_missing_endpoint_persists_real_witq_error(monkeypatch):
         )
     finally:
         db.close(clear=True)
+
+
+def test_signed_ksn_query_is_answered_over_http_and_tcp():
+    """A controller-signed ksn query is answered through the real f4b9 parser.
+
+    Regression for the f4b9 V2 parser routing V2 query messages through
+    ``kvy.processMsg``. ``QueryKevery`` inherits that entry point from KERI, so
+    the watcher answers a controller's direct key-state query over the public
+    :7633 listener instead of silently dropping it. Both transports share the
+    same implementation: HTTP reaches it directly, TCP through the router.
+    """
+    import io
+
+    from keri.app.httping import CESR_ATTACHMENT_HEADER
+    from keri.db import dbing
+
+    ctlHby = habbing.Habery(name="ctl-qry", base="test", temp=True)
+    witHby = habbing.Habery(name="wit-qry", base="test", temp=True)
+    watHby = habbing.Habery(name="wat-qry", base="test", temp=True)
+
+    try:
+        ctlHab = ctlHby.makeHab(name="ctl", icount=1, isith="1", ncount=1, nsith="1", wits=[], toad=0)
+        witHab = witHby.makeHab(name="wit", transferable=False)
+        watHab = watHby.makeHab(name="wat", icount=1, isith="1", ncount=0, nsith="0", wits=[], toad=0)
+        wat_db = dbing.LMDBer(name="wat-qry-db", temp=True)
+        watcher = watching.Watcher(
+            wty=SimpleNamespace(url="http://127.0.0.1:7633"),
+            db=wat_db,
+            hby=watHby,
+            hab=watHab,
+            cid=ctlHab.pre,
+        )
+
+        # Witness ingests controller icp sn0 + rot sn1 and issues a real receipt.
+        witKvy = eventing.Kevery(db=witHby.db, lax=True, local=False)
+        witPsr = wat_httping.parsing.Parser(kvy=witKvy, framed=True)
+        icp = ctlHab.msgOwnEvent(sn=0)
+        witPsr.parseOne(ims=bytearray(icp))
+        ctlHab.rotate(toad=1, cuts=[], adds=[witHab.pre])
+        rot = ctlHab.msgOwnEvent(sn=1)
+        witPsr.parseOne(ims=bytearray(rot))
+        ctlHab.psr.parseOne(ims=bytearray(witHab.receipt(serder=ctlHab.kever.serder)))
+
+        # Watcher ingests icp sn0 and the canonical witnessed replay of rot sn1.
+        watcher.psr.parseOne(ims=bytearray(icp), local=True, version=kering.Vrsn_2_0)
+        wigs = ctlHab.db.wigs.get(keys=dbing.dgKey(ctlHab.pre, ctlHab.kever.serder.said))
+        sigers = ctlHab.db.sigs.get(keys=dbing.dgKey(ctlHab.pre, ctlHab.kever.serder.said))
+        replay = eventing.messagize(
+            ctlHab.kever.serder,
+            sigers=sigers,
+            wigers=wigs,
+            framed=False,
+            gvrsn=kering.Vrsn_2_0,
+        )
+        watcher.psr.parseOne(ims=bytearray(replay), local=True, version=kering.Vrsn_2_0)
+        watcher.kvy.processEscrows()
+        assert watcher.kvy.kevers[ctlHab.pre].sn == 1
+
+        # Controller signs a ksn key-state query with SealLast (lsgs).
+        qserder = eventing.query(
+            pre=ctlHab.pre,
+            route="ksn",
+            query={"i": ctlHab.pre, "src": watcher.hab.pre},
+            version=kering.Vrsn_2_0,
+            pvrsn=kering.Vrsn_2_0,
+            kind=eventing.Kinds.json,
+        )
+        endorsed = ctlHab.endorse(serder=qserder, last=True)
+        body = bytes(endorsed[:qserder.size])
+        attachment = bytes(endorsed[qserder.size:]).decode("utf-8")
+
+        class Req:
+            method = "POST"
+            content_type = "application/cesr"
+            headers = {
+                CESR_DESTINATION_HEADER: watcher.hab.pre,
+                CESR_ATTACHMENT_HEADER: attachment,
+            }
+            bounded_stream = io.BytesIO(body)
+
+        wty = SimpleNamespace(lookup=lambda aid: watcher if aid == watcher.hab.pre else None)
+        rep = Response()
+        wat_httping.HttpEnd(wty=wty).on_post(Req(), rep)
+
+        assert rep.status == falcon.HTTP_200, rep.status
+        assert rep.data, "expected an endorsed /ksn reply body"
+        reply = eventing.SerderKERI(raw=bytes(rep.data))
+        assert reply.ked["t"] == "rpy"
+        assert reply.ked["r"].startswith("/ksn/")
+        # The watcher answers as itself; Keripy stamps an upstream reply with the
+        # queried AID, so the addressed reply must be re-attributed.
+        assert reply.ked["i"] == watcher.hab.pre
+        keystate = reply.ked["a"]
+        assert keystate["i"] == ctlHab.pre
+        assert keystate["s"] == "1"
+
+        # TCP reaches the same shared implementation through the router: the
+        # router selects the watcher named by q.src, then QueryKevery answers.
+        router = wat_eventing.QueryRouter(wty=wty, cues=decking.Deck())
+        tcp_parser = wat_httping.parsing.Parser(
+            kvy=router, framed=True, version=kering.Vrsn_2_0
+        )
+        tcp_parser.parseOne(ims=bytearray(endorsed), local=True, version=kering.Vrsn_2_0)
+
+        tcp_cue = router.cues.pull()
+        assert tcp_cue["kin"] == "reply"
+        assert tcp_cue["route"] == "/ksn"
+        tcp_reply = tcp_cue["serder"]
+        assert kering.deversify(tcp_reply.ked["v"]).pvrsn == kering.Vrsn_2_0
+        assert tcp_reply.kind == eventing.Kinds.json
+        assert tcp_reply.ked["i"] == watcher.hab.pre
+        # Both transports answer with the same watcher key state.
+        assert tcp_reply.ked["a"] == keystate
+    finally:
+        watcher.hby.close(clear=True)
+        ctlHby.close(clear=True)
+        witHby.close(clear=True)
+        watHby.close(clear=True)

@@ -472,17 +472,18 @@ def test_http_put_persists_key_state_for_signed_event():
 
 
 def test_throttle_uses_remote_addr_instead_of_forwarded_route():
-    """Test that rate-limit is done by the connected peer address instead of forwarded client hints."""
+    """Rate-limit an untrusted direct peer by its socket address, not by forwarded client hints."""
     
     # Set up a fake DB
     db = basing.Baser(name="keri-v2-throttle-compat", temp=True)
     try:
         throttle = wat_httping.Throttle(db=db)
 
-        # Present conflicting values so the test can distinguish trusted from untrusted sources
+        # An untrusted direct peer presents conflicting forwarding hints so the test
+        # can prove the socket peer wins over a spoofable forwarded address
         req = SimpleNamespace(
-            remote_addr="127.0.0.1",
-            access_route=["203.0.113.10", "127.0.0.1"],
+            remote_addr="198.51.100.7",
+            access_route=["203.0.113.10", "198.51.100.7"],
         )
         rep = SimpleNamespace(complete=False, status=None)
 
@@ -490,8 +491,8 @@ def test_throttle_uses_remote_addr_instead_of_forwarded_route():
         throttle.process_request(req, rep)
         throttle.process_request(req, rep)
 
-        # The trusted peer address should be the only bucket that increments
-        assert db.ips.get(keys=("127.0.0.1",)).count == 2
+        # The connected socket peer should be the only bucket that increments
+        assert db.ips.get(keys=("198.51.100.7",)).count == 2
 
         # A spoofable forwarded address must not create its own throttle bucket
         assert db.ips.get(keys=("203.0.113.10",)) is None
@@ -503,17 +504,18 @@ def test_throttle_uses_remote_addr_instead_of_forwarded_route():
 
 
 def test_throttle_normalizes_tuple_remote_addr():
+    """An untrusted direct peer with a tuple ``remote_addr`` keys on its host."""
     db = basing.Baser(name="keri-v2-throttle-tuple", temp=True)
     try:
         throttle = wat_httping.Throttle(db=db)
         req = SimpleNamespace(
-            remote_addr=("127.0.0.1", 5631),
+            remote_addr=("198.51.100.7", 5631),
             access_route=["203.0.113.10"],
         )
 
         throttle.process_request(req, SimpleNamespace(complete=False, status=None))
 
-        assert db.ips.get(keys=("127.0.0.1",)).count == 1
+        assert db.ips.get(keys=("198.51.100.7",)).count == 1
         assert db.ips.get(keys=(str(req.remote_addr),)) is None
     finally:
         db.close(clear=True)
@@ -559,6 +561,122 @@ def test_throttle_resets_count_after_window_rollover(monkeypatch):
 
         # A rollover should not trigger rate-limit rejection
         assert rep.complete is False
+    finally:
+        db.close(clear=True)
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {},
+        {"X-Forwarded-For": "not-an-ip"},
+        {"X-Forwarded-For": ""},
+        {"Forwarded": 'for="203.0.113.10:bad"'},
+        {"Forwarded": 'for="[2001:db8::10]:bad"'},
+    ],
+    ids=(
+        "no-forwarding-data",
+        "unparseable-client",
+        "blank-client",
+        "ipv4-bad-port",
+        "ipv6-bad-port",
+    ),
+)
+def test_throttle_falls_back_to_socket_peer_for_unusable_forwarding_data(headers):
+    """A trusted proxy whose forwarding data is unusable keeps the socket peer.
+
+    ``access_route`` is assembled from forwarding headers, so Falcon raises
+    ``ValueError`` for a malformed port such as
+    ``Forwarded: for="203.0.113.10:bad"``. That error escaped the throttle
+    middleware and surfaced as HTTP 500 for a loopback-proxied request instead
+    of falling back to the actual socket peer.
+
+    Real Falcon requests are required here. A ``SimpleNamespace`` satisfied the
+    former request-type guard in ``_client_ip`` and returned before
+    ``access_route`` was ever read, so the fallback was never exercised.
+
+    Each assertion uses a fresh request: Falcon caches the partial
+    ``access_route`` (``[]``) after a failed read, so reusing one request would
+    hide the defect behind the cached value.
+    """
+    probe = testing.create_req(remote_addr="127.0.0.1", headers=headers)
+
+    assert wat_httping._client_ip(probe) == "127.0.0.1"
+
+    db = basing.Baser(name="keri-v2-throttle-unusable-forwarding", temp=True)
+    try:
+        throttle = wat_httping.Throttle(db=db)
+        rep = SimpleNamespace(complete=False, status=None)
+
+        throttle.process_request(
+            testing.create_req(remote_addr="127.0.0.1", headers=headers), rep
+        )
+
+        assert rep.complete is False
+        assert rep.status is None
+        assert db.ips.get(keys=("203.0.113.10",)) is None
+        assert db.ips.get(keys=("2001:db8::10",)) is None
+        reqs = db.ips.get(keys=("127.0.0.1",))
+        assert reqs is not None
+        assert reqs.count == 1
+    finally:
+        db.close(clear=True)
+
+
+@pytest.mark.parametrize(
+    "remote_addr, headers, route, client",
+    [
+        (
+            "127.0.0.1",
+            {"X-Forwarded-For": "203.0.113.10"},
+            ["203.0.113.10", "127.0.0.1"],
+            "203.0.113.10",
+        ),
+        (
+            "::1",
+            {"Forwarded": 'for="[2001:db8::10]"'},
+            ["2001:db8::10", "::1"],
+            "2001:db8::10",
+        ),
+        (
+            "127.0.0.1",
+            {"X-Forwarded-For": "203.0.113.10, 198.51.100.20"},
+            ["203.0.113.10", "198.51.100.20", "127.0.0.1"],
+            "203.0.113.10",
+        ),
+    ],
+    ids=("ipv4-proxy", "ipv6-proxy", "multi-hop-proxy"),
+)
+def test_throttle_uses_trusted_proxy_route_for_client_identity(
+    remote_addr, headers, route, client
+):
+    """Only a loopback reverse proxy may supply the throttled client identity.
+
+    Falcon orders ``access_route`` from the original client through the proxy
+    hops, so the first entry is the client the trusted proxy is speaking for.
+    """
+    req = testing.create_req(remote_addr=remote_addr, headers=headers)
+
+    assert req.access_route == route
+    assert wat_httping._client_ip(req) == client
+
+
+def test_throttle_ignores_forwarding_route_without_socket_peer():
+    """Absent socket-peer data must not let forwarding data claim a bucket."""
+    req = SimpleNamespace(remote_addr=None, access_route=["5.6.7.8"])
+
+    assert wat_httping._client_ip(req) == "unknown"
+
+    db = basing.Baser(name="keri-v2-throttle-missing-peer", temp=True)
+    try:
+        throttle = wat_httping.Throttle(db=db)
+
+        throttle.process_request(req, SimpleNamespace(complete=False, status=None))
+
+        assert db.ips.get(keys=("5.6.7.8",)) is None
+        reqs = db.ips.get(keys=("unknown",))
+        assert reqs is not None
+        assert reqs.count == 1
     finally:
         db.close(clear=True)
 

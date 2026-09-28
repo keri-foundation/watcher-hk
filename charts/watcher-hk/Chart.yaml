@@ -1,0 +1,6 @@
+apiVersion: v2
+name: watcher-hk
+description: KERI watcher host service (watopnet) — independently-addressable watcher nodes, each multiplexing many watcher identities
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,23 @@
+{{- range $i := until (int .Values.replicaCount) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "watcherhk.fullname" $ }}-{{ $i }}
+  labels:
+    {{- include "watcherhk.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+spec:
+  # Per-ordinal ClusterIP so Ingress can route watcher-<N>.<baseDomain> to
+  # exactly pod N -- a shared/headless Service would load-balance across all
+  # replicas instead.
+  type: ClusterIP
+  selector:
+    {{- include "watcherhk.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+    statefulset.kubernetes.io/pod-name: {{ include "watcherhk.fullname" $ }}-{{ $i }}
+  ports:
+    - name: watcher
+      port: {{ $.Values.ports.watcher }}
+      targetPort: {{ $.Values.ports.watcher }}
+---
+{{- end }}

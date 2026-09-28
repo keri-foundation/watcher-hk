@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "watcherhk.fullname" . }}-headless
+  labels:
+    {{- include "watcherhk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+spec:
+  # Required by statefulset.spec.serviceName. Also gives in-cluster callers
+  # (hkapi/hkweb) direct per-pod DNS to each replica's boot API:
+  # <fullname>-N.<fullname>-headless.<namespace>.svc.cluster.local:<ports.boot>
+  clusterIP: None
+  selector:
+    {{- include "watcherhk.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+  ports:
+    - name: boot
+      port: {{ .Values.ports.boot }}
+      targetPort: {{ .Values.ports.boot }}
+    - name: watcher
+      port: {{ .Values.ports.watcher }}
+      targetPort: {{ .Values.ports.watcher }}

@@ -144,6 +144,8 @@ def setup(
     bootApp.add_route("/watchers/{eid}", watResEnd)
     watcherStatusEnd = WatcherStatusEnd(wty)
     bootApp.add_route("/watchers/{eid}/status", watcherStatusEnd)
+    healthEnd = HealthEnd()
+    bootApp.add_route("/health", healthEnd)
 
     app = falcon.App(
         middleware=falcon.CORSMiddleware(
@@ -1150,3 +1152,17 @@ class WatcherStatusEnd:
         rep.status = falcon.HTTP_200
         rep.content_type = "application/json"
         rep.data = json.dumps(status_data, indent=2).encode("utf-8")
+
+
+class HealthEnd:
+    """Health resource for determining that a container is live"""
+
+    @staticmethod
+    def on_get(_, resp):
+        """Return 204 No Content to indicate the service is alive.
+
+        Parameters:
+            _ (Request): Falcon HTTP request (unused)
+            resp (Response): Falcon HTTP response
+        """
+        resp.status = falcon.HTTP_NO_CONTENT

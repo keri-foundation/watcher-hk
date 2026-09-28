@@ -1,0 +1,40 @@
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Number of independent watopnet nodes (failure domains), NOT the number of watcher
+# identities. Each node already multiplexes an arbitrary number of watcher identities
+# via its own boot API (POST /watchers), independent of replica count. Scale this up
+# only for node-level redundancy/geo-distribution.
+replicaCount: 1
+
+ports:
+  boot: 7631
+  watcher: 7632
+
+# REQUIRED: base domain for per-instance external hostnames. Instance N is reachable
+# at watcher-N.<baseDomain>, matching the pattern already advertised in each replica's
+# OOBI curls.
+baseDomain: ""
+
+resources: {}
+
+persistence:
+  storageClassName: ""
+  accessMode: ReadWriteOnce
+  size: 5Gi
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""   # expected to be a wildcard cert covering *.<baseDomain>
+
+serviceAccount:
+  create: false
+  name: ""

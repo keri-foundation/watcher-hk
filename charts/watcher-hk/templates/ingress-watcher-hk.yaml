@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "watcherhk.fullname" . }}
+  labels:
+    {{- include "watcherhk.labels" . | nindent 4 }}
+    app.kubernetes.io/component: watcher-hk
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        {{- range $i := until (int .Values.replicaCount) }}
+        - watcher-{{ $i }}.{{ $.Values.baseDomain }}
+        {{- end }}
+      secretName: {{ required "ingress.tls.secretName is required when ingress.tls.enabled is true" .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    {{- range $i := until (int .Values.replicaCount) }}
+    - host: watcher-{{ $i }}.{{ $.Values.baseDomain }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Boot port is never referenced here -- it stays ClusterIP-only
+                # via the headless Service, matching production reality that
+                # the boot/management API must not be publicly reachable.
+                name: {{ include "watcherhk.fullname" $ }}-{{ $i }}
+                port:
+                  number: {{ $.Values.ports.watcher }}
+    {{- end }}
+{{- end }}

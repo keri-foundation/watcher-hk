@@ -17,7 +17,7 @@ from keri import help
 from watopnet.app import watching
 
 d = "Runs KERI watcher operational network.\n"
-d += "Example:\nwatcher -H 7631 -t 7632\n"
+d += "Example:\nwatopnet start -H 7632 --bootport 7631 --config-dir /path/to/config\n"
 parser = argparse.ArgumentParser(description=d)
 parser.set_defaults(handler=lambda args: launch(args))
 parser.add_argument(
@@ -25,7 +25,7 @@ parser.add_argument(
     "--version",
     action="version",
     version=__version__,
-    help="Prints out version of script runner.",
+    help="Prints the version of the installed keri library.",
 )
 parser.add_argument(
     "-H",
@@ -46,14 +46,14 @@ parser.add_argument(
     "-bp",
     action="store",
     default=7631,
-    help="Local port number the HTTP server listens on. Default is 7631.",
+    help="Local port number the boot (management) HTTP server listens on. Default is 7631.",
 )
 parser.add_argument(
     "--boothost",
     "-bh",
     action="store",
     default="127.0.0.1",
-    help="Local host IP address HTTP server listens on. Default is 127.0.0.1.",
+    help="Local host IP address the boot (management) HTTP server listens on. Default is 127.0.0.1.",
 )
 parser.add_argument(
     "--base",
@@ -65,7 +65,8 @@ parser.add_argument(
 parser.add_argument(
     "--passcode",
     "-p",
-    help="22 character encryption passcode for keystore (is not saved)",
+    help="22 character encryption passcode for keystore (is not saved). "
+    "Currently accepted but unused: watcher keystores are created unencrypted.",
     dest="bran",
     default=None,
 )  # passcode => bran
@@ -73,14 +74,14 @@ parser.add_argument(
     "--config-dir",
     "-c",
     dest="configDir",
-    help="directory override for configuration data",
+    help="directory above keri/cf/main/ containing watopnet.json (config data override)",
 )
 parser.add_argument(
     "--config-file",
     dest="configFile",
     action="store",
     default=None,
-    help="configuration filename override",
+    help="configuration filename override (currently unused; watopnet.json is always read)",
 )
 parser.add_argument(
     "--loglevel",
@@ -96,6 +97,7 @@ parser.add_argument(
     default=None,
     help="path of the log file. If not defined, logs will not be written to the file.",
 )
+# TLS options; applied to the boot server only (the watcher server is plain HTTP)
 parser.add_argument("--keypath", action="store", required=False, default=None)
 parser.add_argument("--certpath", action="store", required=False, default=None)
 parser.add_argument("--cafilepath", action="store", required=False, default=None)

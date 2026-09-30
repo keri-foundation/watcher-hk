@@ -15,6 +15,8 @@ from keri.end import ending
 class OOBIEnd:
     """GET endpoint for resolving watcher OOBI requests (``/oobi/{aid}[/{role}[/{eid}]]``).
 
+    ``aid`` is a watcher's own AID (the ``eid`` returned by ``POST /watchers``); the
+    endpoint serves that watcher's identity, not arbitrary observed AIDs.
     Looks up the watcher for the requested AID, verifies the AID is fully witnessed,
     and returns a signed OOBI reply message in ``application/json+cesr`` format.
     Falls back to a witness-role OOBI plus a KEL replay when no role is specified.

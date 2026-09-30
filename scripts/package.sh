@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and publish witopnet to PyPI.
+# Build and publish watopnet to PyPI.
 #
 # Requirements:
 #   pip install build twine

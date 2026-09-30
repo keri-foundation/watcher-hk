@@ -64,8 +64,13 @@ States = Stateage(
 
 
 class WitnessState:
-    """
-    State of an AID according to a particular
+    """Result of comparing local key state for an AID with one witness's key state.
+
+    Attributes:
+        wit (str): qb64 AID of the witness
+        state (str): one of the ``States`` values (even, ahead, behind, duplicitous)
+        sn (int): sequence number reported by the witness
+        dig (str): event digest reported by the witness
     """
 
     wit: str
@@ -88,19 +93,24 @@ def setup(
     """Initialize and return the list of doers for the Watcher Operational Network.
 
     Sets up a dual-server HTTP architecture:
-      - Boot server (bootHost:bootPort): management API for provisioning watchers
-      - Watcher server (host:httpport): KERI event processing and OOBI resolution
+      - Boot server (bootHost:bootPort): unauthenticated management API for
+        provisioning watchers; optionally TLS-enabled via keypath/certpath/cafilepath
+      - Watcher server (host:httpport): KERI event processing and OOBI resolution;
+        always plain HTTP and rate-limited per client by ``httping.Throttle``
+
+    The TCP layer in ``watopnet.core.tcp`` is not started here.
 
     Parameters:
         bootHost (str): host the boot/management HTTP server listens on
         bootPort (int): port the boot/management HTTP server listens on
         base (str | None): optional path prefix for KERI keystore storage
-        headDirPath (str | None): optional override for the config file directory
+        headDirPath (str | None): directory above ``keri/cf/main/`` holding
+            ``watopnet.json``; a missing file yields an empty config (no error)
         host (str): host the main watcher HTTP server listens on
         httpport (int): port the main watcher HTTP server listens on
-        keypath (str | None): optional path to TLS private key
-        certpath (str | None): optional path to TLS certificate
-        cafilepath (str | None): optional path to TLS CA bundle
+        keypath (str | None): optional path to TLS private key (boot server only)
+        certpath (str | None): optional path to TLS certificate (boot server only)
+        cafilepath (str | None): optional path to TLS CA bundle (boot server only)
 
     Returns:
         list: doers ready to run under a Doist event loop
@@ -208,9 +218,11 @@ class Watchery(doing.DoDoer):
             cf (Configer | None): KERI configuration file reader
             scheme (str): URL scheme advertised by this watcher (http or https)
             qrycues (Deck | None): shared deck for query-reply cues
-            host (str): hostname advertised in OOBI URLs
-            httpport (int): HTTP port advertised in OOBI URLs
-            tcpport (int): TCP port for direct connections
+            host (str): hostname advertised in OOBI URLs (overridden by ``curls[0]``
+                in the ``watopnet`` config section when it has a ``dt`` field)
+            httpport (int): HTTP port advertised in OOBI URLs (likewise)
+            tcpport (int): TCP port from ``curls[1]``; currently unused because the
+                TCP layer is not started
         """
         self.db = db
         self.base = base
@@ -365,14 +377,15 @@ class Watchery(doing.DoDoer):
     def deleteWatcher(self, eid):
         """Remove a running Watcher by its endpoint identifier.
 
-        Closes the Watcher doer, removes its record from the database, and
-        deletes it from the in-memory registry.
+        Removes the watcher's records from the database, closes and clears its
+        keystore, and removes it from the running doers and in-memory registry.
 
         Parameters:
             eid (str): qb64 AID (endpoint identifier) of the watcher to remove
 
-        Returns:
-            bool: True if the watcher was found and removed, False if not found
+        Raises:
+            ValueError: if ``eid`` is not a known watcher. ``WatcherResourceEnd``
+                does not map this, so the boot API currently returns 500.
         """
         if eid not in self.wats:
             raise ValueError(
@@ -654,6 +667,8 @@ class EscrowDoer(doing.Doer):
 
 class CueDoer(doing.Doer):
     """Doer that classifies inbound cues and forwards appropriate replies to the response deck.
+
+    Not currently instantiated by ``setup()`` or ``Watcher``; retained for the TCP path.
 
     Handles receipt/notice cues (forwards a signed KSN), replay cues (forwards
     log messages after verifying the AID is observed), and reply/ksn cues
@@ -970,6 +985,8 @@ class WatcherCollectionEnd:
             oobi (str): optional — OOBI URL for the controller; if provided, queued for resolution
 
         Returns a JSON object with ``cid``, ``eid``, and ``oobis`` for the new watcher.
+        Responds 400 for a missing/invalid ``aid`` and 503 on file descriptor
+        exhaustion. Repeated calls with the same ``aid`` create additional watchers.
 
         Parameters:
             req (Request): Falcon HTTP request object
@@ -1048,8 +1065,9 @@ class WatcherResourceEnd:
 class WatcherStatusEnd:
     """Boot API endpoint for retrieving watcher status (``GET /watchers/{eid}/status``).
 
-    Returns the full set of observed AIDs and the most recent per-witness key-state
-    query results stored in ``Baser.witq``.
+    Returns the most recent per-witness key-state query results stored in
+    ``Baser.witq``, grouped by observed AID, with per-AID and overall summaries.
+    Empty until a Sentinal has polled at least one observed AID.
     """
 
     def __init__(self, wty: Watchery):

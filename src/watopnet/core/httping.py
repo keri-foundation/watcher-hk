@@ -27,7 +27,7 @@ class HttpEnd:
     Handles POST (single event) and PUT (raw CESR stream) on ``/``.  Incoming
     events are routed to the watcher identified by the ``CESR-Destination`` header.
     KEL, EXN, and RPY messages are parsed and stored; QRY messages are answered
-    inline via ``QueryKeveryShim``.
+    inline via ``QueryKeveryShim``; TEL and ACDC messages are rejected with 422.
     """
 
     def __init__(self, wty, rxbs=None):
@@ -226,9 +226,13 @@ def getRequiredParam(body, name):
 class Throttle(object):
     """Falcon middleware that rate-limits requests by client IP address.
 
-    Allows at most ``MaximumRequests`` requests per IP within a ``Window``
+    Allows at most ``MaximumRequests`` requests per client within a ``Window``
     time window. Requests that exceed the limit receive 429 Too Many Requests
     and bypass all further Falcon processing.
+
+    Known issue: ``process_request`` derives the client key with
+    ``req.access_route[0][0]``, which is the first *character* of the address
+    string, so unrelated clients can share a counter.
     """
 
     Window = datetime.timedelta(seconds=10)

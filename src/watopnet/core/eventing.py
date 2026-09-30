@@ -5,7 +5,9 @@ KERI
 watopnet.core.eventing module
 
 Kevery shims that restrict event processing to query messages only,
-routing each query to the appropriate watcher instance.
+routing each query to the appropriate watcher instance. ``QueryKeveryShim`` is
+used by the HTTP endpoint; ``KeveryQueryShim`` serves the TCP layer, which is
+not currently started by ``watching.setup()``.
 """
 
 from hio.help import decking

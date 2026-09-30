@@ -6,6 +6,8 @@ watopnet.core.tcp.serving module
 
 TCP server layer for the watcher: Directant accepts incoming connections and
 spawns a Reactant per connection to parse CESR query messages and send signed replies.
+
+Note: this layer is not currently wired into ``watopnet.app.watching.setup()``.
 """
 
 from hio.base import doing

@@ -1209,7 +1209,6 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         # Both transports answer with the same watcher key state.
         assert tcp_reply.ked["a"] == keystate
     finally:
-        watcher.hby.close(clear=True)
         ctlHby.close(clear=True)
         witHby.close(clear=True)
         watHby.close(clear=True)

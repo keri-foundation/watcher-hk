@@ -43,7 +43,7 @@ class QueryKevery(eventing.Kevery):
             cues (Deck | None): deck that receives reply and replay cues
         """
         super().__init__(
-            cues=cues if cues is not None else decking.Deck(),
+            cues=cues,
             db=watcher.hab.db,
             local=False,
         )

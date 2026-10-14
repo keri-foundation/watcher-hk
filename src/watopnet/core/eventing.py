@@ -96,6 +96,13 @@ class QueryKevery(eventing.Kevery):
             )
             return
 
+        query = serder.sad.get("q")
+        if not isinstance(query, dict) or query.get("src") != self.watcher.hab.pre:
+            logger.error(
+                f"Query received for invalid watcher: {self.watcher.hab.pre}"
+            )
+            return
+
         self._processQueryV2Reply(
             serder, source=source, sigers=sigers, cigars=cigars, **kwa
         )

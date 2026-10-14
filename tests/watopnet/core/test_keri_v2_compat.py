@@ -688,7 +688,7 @@ def test_throttle_ignores_forwarding_route_without_socket_peer():
 
 
 def test_query_replies_are_normalized_to_fixed_v2_json(monkeypatch):
-    """A watcher answers with a V2 JSON reply whatever folded the query.
+    """A watcher answers with a V2 JSON reply regardless of query framing.
 
     KERI mirrors the requester's version and kind and stamps the reply with
     ``pre = q.i``; watcher replies must be V2 JSON attributed to the watcher AID.
@@ -1127,6 +1127,8 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
     ctlHby = habbing.Habery(name="ctl-qry", base="test", temp=True)
     witHby = habbing.Habery(name="wit-qry", base="test", temp=True)
     watHby = habbing.Habery(name="wat-qry", base="test", temp=True)
+    wat_db = None
+    watcher = None
 
     try:
         ctlHab = ctlHby.makeHab(
@@ -1207,6 +1209,65 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         keystate = reply.ked["a"]
         assert keystate["i"] == ctlHab.pre
         assert keystate["s"] == "1"
+
+        # HTTP routing uses the destination header, so q.src must independently
+        # name that same watcher before inherited KERI query handling runs.
+        routing_results = {}
+        for case, query in (
+            ("missing-src", {"i": ctlHab.pre}),
+            ("malformed-src", {"i": ctlHab.pre, "src": None}),
+            ("mismatched-src", {"i": ctlHab.pre, "src": witHab.pre}),
+        ):
+            routed_query = eventing.query(
+                pre=ctlHab.pre,
+                route="ksn",
+                query=query,
+                version=kering.Vrsn_2_0,
+                pvrsn=kering.Vrsn_2_0,
+                kind=eventing.Kinds.json,
+            )
+            routed_endorsed = ctlHab.endorse(serder=routed_query, last=True)
+            routed_sigers = ctlHab.sign(ser=routed_query.raw, indexed=True)
+            _, routed_indices = eventing.verifySigs(
+                raw=routed_query.raw,
+                sigers=routed_sigers,
+                verfers=ctlHab.kever.verfers,
+            )
+            assert routed_indices == [0, 1]
+            routed_body = bytes(routed_endorsed[: routed_query.size])
+            routed_attachment = bytes(
+                routed_endorsed[routed_query.size:]
+            ).decode("utf-8")
+            routed_req = SimpleNamespace(
+                method="POST",
+                content_type="application/cesr",
+                headers={
+                    CESR_DESTINATION_HEADER: watcher.hab.pre,
+                    CESR_ATTACHMENT_HEADER: routed_attachment,
+                },
+                bounded_stream=io.BytesIO(routed_body),
+            )
+            routed_rep = Response()
+            try:
+                wat_httping.HttpEnd(wty=wty).on_post(routed_req, routed_rep)
+            except Exception as ex:
+                routing_results[case] = {"exception": type(ex).__name__}
+            else:
+                routed_reply = (
+                    eventing.SerderKERI(raw=bytes(routed_rep.data))
+                    if routed_rep.data
+                    else None
+                )
+                routing_results[case] = {
+                    "status": routed_rep.status,
+                    "reply_route": routed_reply.ked["r"] if routed_reply else None,
+                }
+
+        assert routing_results == {
+            "missing-src": {"status": falcon.HTTP_204, "reply_route": None},
+            "malformed-src": {"status": falcon.HTTP_204, "reply_route": None},
+            "mismatched-src": {"status": falcon.HTTP_204, "reply_route": None},
+        }
 
         # TCP reaches the same shared implementation through the router: the
         # router selects the watcher named by q.src, then QueryKevery answers.
@@ -1296,6 +1357,10 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
                 f"TCP replies={len(rejected_router.cues)}"
             )
     finally:
+        if watcher is not None and watcher.verifier.reger.opened:
+            watcher.verifier.reger.close(clear=True)
         ctlHby.close(clear=True)
         witHby.close(clear=True)
         watHby.close(clear=True)
+        if wat_db is not None and wat_db.opened:
+            wat_db.close(clear=True)

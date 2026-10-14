@@ -26,7 +26,7 @@ class QueryKevery(eventing.Kevery):
     inherits ``keri.core.eventing.Kevery.processMsg`` unchanged and overrides
     only the watcher-specific query policy:
 
-    - the requester must present an authenticated source
+    - the requester must sign the query with the configured controller's keys
     - that source must be the watcher's configured controller AID
     - key state is looked up in the watcher's own database
 
@@ -66,6 +66,33 @@ class QueryKevery(eventing.Kevery):
         if source.qb64 != self.watcher.cid:
             logger.error(
                 f"Query received from invalid controller: {source.qb64} != {self.watcher.cid}"
+            )
+            return
+
+        kever = self.db.kevers.get(self.watcher.cid)
+        if kever is None:
+            logger.error(
+                f"Query received before controller state is available: {self.watcher.cid}"
+            )
+            return
+        if len(kever.verfers) < kever.tholder.size:
+            logger.error(
+                f"Query received with invalid controller signing threshold: {self.watcher.cid}"
+            )
+            return
+
+        try:
+            _, indices = eventing.verifySigs(
+                raw=serder.raw, sigers=sigers or [], verfers=kever.verfers
+            )
+        except kering.ValidationError as ex:
+            logger.error(f"Query received without valid controller signatures: {ex}")
+            return
+
+        indices = sorted(set(indices))
+        if not indices or not kever.tholder.satisfy(indices):
+            logger.error(
+                f"Query received without controller signing threshold: {self.watcher.cid}"
             )
             return
 

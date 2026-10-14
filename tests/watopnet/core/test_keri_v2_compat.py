@@ -718,10 +718,23 @@ def test_query_replies_are_normalized_to_fixed_v2_json(monkeypatch):
     # QueryKevery calls super().processQuery, so patching the KERI method
     # exercises the real inheritance path instead of a stand-in base class.
     monkeypatch.setattr(eventing.Kevery, "processQuery", fakeProcessQuery)
+    monkeypatch.setattr(wat_eventing.eventing, "verifySigs", lambda **kwa: ([], [0]))
 
     watcher = SimpleNamespace(
         cid=CONTROLLER_AID,
-        hab=SimpleNamespace(pre=WATCHER_AID, db=SimpleNamespace()),
+        hab=SimpleNamespace(
+            pre=WATCHER_AID,
+            db=SimpleNamespace(
+                kevers={
+                    CONTROLLER_AID: SimpleNamespace(
+                        verfers=[object()],
+                        tholder=SimpleNamespace(
+                            size=1, satisfy=lambda indices: True
+                        ),
+                    )
+                }
+            ),
+        ),
     )
 
     for pvrsn in (kering.Vrsn_1_0, kering.Vrsn_2_0):
@@ -1116,9 +1129,13 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
     watHby = habbing.Habery(name="wat-qry", base="test", temp=True)
 
     try:
-        ctlHab = ctlHby.makeHab(name="ctl", icount=1, isith="1", ncount=1, nsith="1", wits=[], toad=0)
+        ctlHab = ctlHby.makeHab(
+            name="ctl", icount=2, isith="2", ncount=2, nsith="2", wits=[], toad=0
+        )
         witHab = witHby.makeHab(name="wit", transferable=False)
-        watHab = watHby.makeHab(name="wat", icount=1, isith="1", ncount=0, nsith="0", wits=[], toad=0)
+        watHab = watHby.makeHab(
+            name="wat", icount=1, isith="1", ncount=0, nsith="0", wits=[], toad=0
+        )
         wat_db = dbing.LMDBer(name="wat-qry-db", temp=True)
         watcher = watching.Watcher(
             wty=SimpleNamespace(url="http://127.0.0.1:7633"),
@@ -1208,6 +1225,76 @@ def test_signed_ksn_query_is_answered_over_http_and_tcp():
         assert tcp_reply.ked["i"] == watcher.hab.pre
         # Both transports answer with the same watcher key state.
         assert tcp_reply.ked["a"] == keystate
+
+        # A matching lsgs prefix is only a claim. Missing, invalid, or
+        # insufficient indexed signatures must not produce a reply.
+        valid_sigers = ctlHab.sign(ser=qserder.raw, indexed=True)
+        _, valid_indices = eventing.verifySigs(
+            raw=qserder.raw, sigers=valid_sigers, verfers=ctlHab.kever.verfers
+        )
+        assert valid_indices == [0, 1]
+
+        duplicate_siger = eventing.Siger(
+            raw=valid_sigers[0].raw, code="B", index=valid_sigers[0].index
+        )
+        assert duplicate_siger.qb64 != valid_sigers[0].qb64
+        _, duplicate_indices = eventing.verifySigs(
+            raw=qserder.raw,
+            sigers=[valid_sigers[0], duplicate_siger],
+            verfers=ctlHab.kever.verfers,
+        )
+        assert duplicate_indices == [0, 0]
+
+        invalid_siger = eventing.Siger(
+            raw=bytes([valid_sigers[0].raw[0] ^ 1]) + valid_sigers[0].raw[1:],
+            code=valid_sigers[0].code,
+            index=valid_sigers[0].index,
+        )
+        rejected_attachments = {
+            "duplicate-index": [valid_sigers[0], duplicate_siger],
+            "missing": [],
+            "invalid": [invalid_siger, valid_sigers[1]],
+            "insufficient": [valid_sigers[0]],
+        }
+        for case, sigers in rejected_attachments.items():
+            rejected = eventing.messagize(
+                serder=qserder,
+                lsgs=[(ctlHab.kever.prefixer, sigers)],
+                framed=False,
+                gvrsn=kering.Vrsn_2_0,
+            )
+
+            rejected_req = SimpleNamespace(
+                method="POST",
+                content_type="application/cesr",
+                headers={
+                    CESR_DESTINATION_HEADER: watcher.hab.pre,
+                    CESR_ATTACHMENT_HEADER: bytes(rejected[qserder.size :]).decode(
+                        "utf-8"
+                    ),
+                },
+                bounded_stream=io.BytesIO(bytes(rejected[: qserder.size])),
+            )
+
+            rejected_rep = Response()
+            wat_httping.HttpEnd(wty=wty).on_post(rejected_req, rejected_rep)
+
+            rejected_router = wat_eventing.QueryRouter(wty=wty, cues=decking.Deck())
+            rejected_parser = wat_httping.parsing.Parser(
+                kvy=rejected_router, framed=True, version=kering.Vrsn_2_0
+            )
+            rejected_parser.parseOne(
+                ims=bytearray(rejected), local=True, version=kering.Vrsn_2_0
+            )
+            assert (
+                rejected_rep.status == falcon.HTTP_204
+                and not rejected_rep.data
+                and not rejected_router.cues
+            ), (
+                f"{case}: HTTP status={rejected_rep.status}, "
+                f"HTTP data={bool(rejected_rep.data)}, "
+                f"TCP replies={len(rejected_router.cues)}"
+            )
     finally:
         ctlHby.close(clear=True)
         witHby.close(clear=True)
